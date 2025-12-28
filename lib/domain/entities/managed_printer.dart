@@ -1,4 +1,6 @@
-import 'package:print_manager/infra/zipher_socket.dart';
+import 'package:print_manager/core/interfaces/printer_socket.dart';
+import 'package:print_manager/core/enums/printer_protocol.dart';
+import 'package:print_manager/core/factories/printer_socket_factory.dart';
 
 class ManagedPrinter {
   final int index;
@@ -6,7 +8,8 @@ class ManagedPrinter {
   final String name;
   final String ip;
   final int port;
-  final ZipherSocket socket;
+  final PrinterSocket socket; // 프로토콜 독립적으로 변경
+  final PrinterProtocol protocol; // 프로토콜 타입 추가
   final String regDate;
   //final PrinterRepository repository;
 
@@ -28,11 +31,14 @@ class ManagedPrinter {
     required this.ip,
     required this.port,
     required this.regDate,
+    PrinterProtocol? protocol,
+    PrinterSocket? socket,
     //required this.repository,
-  }) : socket = ZipherSocket() {
-    socket.onData = _handleData;
-    socket.onDone = () => _updateStatus('연결 종료');
-    socket.onError = (e) => _updateStatus('에러: $e');
+  }) : protocol = protocol ?? PrinterProtocol.zipher,
+       socket = socket ?? PrinterSocketFactory.create(protocol ?? PrinterProtocol.zipher) {
+    this.socket.setOnData(_handleData);
+    this.socket.setOnDone(() => _updateStatus('연결 종료'));
+    this.socket.setOnError((e) => _updateStatus('에러: $e'));
   }
 
   Future<bool> connect() async {
