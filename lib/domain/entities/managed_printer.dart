@@ -1,6 +1,7 @@
 import 'package:print_manager/core/interfaces/printer_socket.dart';
 import 'package:print_manager/core/enums/printer_protocol.dart';
 import 'package:print_manager/core/factories/printer_socket_factory.dart';
+import 'package:print_manager/core/services/logger_service.dart';
 
 class ManagedPrinter {
   final int index;
@@ -53,7 +54,7 @@ class ManagedPrinter {
   }
 
   Future<void> sendPrintJob(String jobName, int start, int end) async {
-    print("sendPrinterJob Start");
+    logger.i("sendPrinterJob Start");
     final field = 'Field00';
     final jobName = "0611textTest";
     await socket.setPrinterRunning();
@@ -102,7 +103,7 @@ class ManagedPrinter {
 
       final printString = uniqueCode+toSixDigitHex(i);
       //final printString = toSixDigitHex(i);
-      print("printString : $printString");
+      logger.i("printString : $printString");
       await socket.updateField(field, printString);
       await Future.delayed(Duration(milliseconds: 300)); // 프린터 속도에 따라 조정
       await socket.printOnce();

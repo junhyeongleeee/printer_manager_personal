@@ -3,6 +3,7 @@ import '../../domain/entities/order_item.dart';
 import 'package:print_manager/data/models/response/order_response.dart';
 import 'package:print_manager/data/mappers/order_response_data_mapper.dart';
 import 'package:collection/collection.dart';
+import 'package:print_manager/core/services/logger_service.dart';
 
 // orderListProvider 정의
 final orderListProvider = StateNotifierProvider<OrderListNotifier, List<OrderItem>>((ref) {
@@ -89,14 +90,14 @@ class OrderListNotifier extends StateNotifier<List<OrderItem>> {
         .toList();
 
     notifier.state = [...updatedItems, ...newItems];
-    print("notifier.state = ${notifier.state}");
+    logger.i("notifier.state = ${notifier.state}");
   }
 
   void replaceOrderListInProvider(WidgetRef ref, OrderResponse newDtos) {
     final notifier = ref.read(orderListProvider.notifier);
     notifier.state = newDtos.data.orderList.map((dto) => dto.toOrderItem()).toList();
 
-    print("orderListProvider replaced with ${notifier.state.length} items");
+    logger.i("orderListProvider replaced with ${notifier.state.length} items");
   }
 
 

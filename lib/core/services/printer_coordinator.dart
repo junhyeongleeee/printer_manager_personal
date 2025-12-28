@@ -1,4 +1,5 @@
 import 'package:print_manager/domain/entities/managed_printer.dart';
+import 'package:print_manager/core/services/logger_service.dart';
 
 /// 여러 프린터를 동시에 제어하는 코디네이터
 /// 여러 프린터에 동시에 작업을 할당하고 관리합니다.
@@ -27,7 +28,7 @@ class PrinterCoordinator {
         final result = await printer.connect();
         return MapEntry(printer, result);
       } catch (e) {
-        print('프린터 ${printer.name} 연결 실패: $e');
+        logger.i('프린터 ${printer.name} 연결 실패: $e');
         return MapEntry(printer, false);
       }
     });
@@ -63,7 +64,7 @@ class PrinterCoordinator {
         
         return MapEntry(printer, true);
       } catch (e) {
-        print('프린터 ${assignment.printerId} 작업 할당 실패: $e');
+        logger.i('프린터 ${assignment.printerId} 작업 할당 실패: $e');
         return MapEntry(
           _printers.firstWhere((p) => p.id == assignment.printerId),
           false,
@@ -89,7 +90,7 @@ class PrinterCoordinator {
         await printer.getPrinterStatus();
         return MapEntry(printer, printer.connectStatus);
       } catch (e) {
-        print('프린터 ${printer.name} 상태 조회 실패: $e');
+        logger.i('프린터 ${printer.name} 상태 조회 실패: $e');
         return MapEntry(printer, '오류');
       }
     });

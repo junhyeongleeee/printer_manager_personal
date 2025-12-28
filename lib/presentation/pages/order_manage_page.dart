@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:print_manager/data/models/request/update_printerjob_request.dart';
 import 'package:print_manager/data/models/request/warehouse_request.dart';
 import '../../domain/entities/managed_printer.dart';
 import '../providers/order_list_provider.dart';
@@ -10,12 +9,63 @@ import 'package:print_manager/data/models/request/patch_order_request.dart';
 import 'package:print_manager/data/repositories/printer_repository_provider.dart';
 import 'package:print_manager/data/models/request/printerjob_request.dart';
 import 'package:print_manager/presentation/providers/prototype_printer_provider.dart';
+import 'package:print_manager/core/services/logger_service.dart';
 
 class OrderManagePage extends ConsumerStatefulWidget {
   const OrderManagePage({super.key});
 
   @override
   ConsumerState<OrderManagePage> createState() => _OrderManagePageState();
+}
+
+/// 주문 상태 상수
+class OrderStatus {
+  static const String waiting = '1';
+  static const String inProgress = '2';
+  static const String shipping = '3';
+  static const String printing = '4';
+  static const String printingComplete = '5';
+  static const String shipped = '6';
+
+  static String getStatusText(String status) {
+    switch (status) {
+      case waiting:
+        return '제작 대기';
+      case inProgress:
+        return '제작 중';
+      case shipping:
+        return '배송 중';
+      case printing:
+        return '인쇄/가공 중';
+      case printingComplete:
+        return '인쇄/가공 완료';
+      case shipped:
+        return '출고 완료';
+      default:
+        return '제작 대기';
+    }
+  }
+}
+
+/// UI 상수
+class _UIConstants {
+  static const double headerHeight = 84.0;
+  static const double horizontalPadding = 50.0;
+  static const double buttonMinWidth = 94.0;
+  static const double buttonHeight = 40.0;
+  static const double borderRadius = 4.0;
+  static const double cellMinWidth = 100.0;
+  static const double buttonCellWidth = 120.0;
+  static const double refreshDelaySeconds = 1.0;
+
+  // 색상
+  static const Color headerBackgroundColor = Color(0xFFF9FAFB);
+  static const Color rowBackgroundColor = Color(0xFFFFFFFF);
+  static const Color primaryBlue = Color(0xFF1A66EB);
+  static const Color darkBlue = Color(0xFF0246B0);
+  static const Color successGreen = Color(0xFF01BC90);
+  static const Color textGray = Color(0xFF3A3A3C);
+  static const Color borderGray = Color(0xFFD9D9D9);
 }
 
 class _OrderManagePageState extends ConsumerState<OrderManagePage> {
@@ -25,13 +75,11 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
     _refreshOrderList();
   }
 
-  void _refreshOrderList() async {
+  /// 주문 목록 새로고침
+  Future<void> _refreshOrderList() async {
     final orderRepository = ref.read(orderRepositoryProvider);
     final response = await orderRepository.orderList();
-    //ref.read(orderListProvider.notifier).mergeNewOrdersIntoProvider(ref, response);
-    ref
-        .read(orderListProvider.notifier)
-        .replaceOrderListInProvider(ref, response);
+    ref.read(orderListProvider.notifier).replaceOrderListInProvider(ref, response);
   }
 
   @override
@@ -39,325 +87,254 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
     final orders = ref.watch(orderListProvider);
     final printers = ref.watch(printerListProvider);
 
-    return Column(
+    return Column(children: [_buildHeader(), Expanded(child: _buildOrderTable(orders, printers))]);
+  }
+
+  /// 헤더 영역 빌드
+  Widget _buildHeader() {
+    return Row(
       children: [
-        Row(
-          children: [
-            SizedBox(height: 84),
-            Padding(
-              padding: const EdgeInsets.only(left: 50.0),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  "주문 상태창",
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-              ),
-            ),
-            Spacer(),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Padding(
-                padding: const EdgeInsets.all(8.0),
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    // 새로고침 로직
-                    _refreshOrderList();
-                  },
-                  icon: Icon(Icons.refresh, color: Color(0xFF1A66EB)),
-                  label: Text(
-                    '새로고침',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Color(0xFFFFFFFF), // 버튼 배경색
-                    foregroundColor: Color(0xFF3A3A3C), // 텍스트 + 아이콘 색상
-                    minimumSize: Size(94, 40),
-                    shape: RoundedRectangleBorder(
-                      // 선택: 둥근 테두리 적용
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-
-        Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return SingleChildScrollView(
-                scrollDirection: Axis.vertical,
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(minWidth: constraints.maxWidth),
-                    child: IntrinsicWidth(
-                      child: DataTable(
-                        headingRowColor:
-                            MaterialStateProperty.resolveWith<Color?>(
-                              (Set<MaterialState> states) =>
-                                  Color(0xFFF9FAFB), // 헤더 배경색
-                            ),
-                        dataRowColor: MaterialStateProperty.resolveWith<Color?>(
-                          (Set<MaterialState> states) {
-                            if (states.contains(MaterialState.selected)) {
-                              return Color(0xFFFFFFFF); // 선택된 row 색상
-                            }
-                            return Color(0xFFFFFFFF); // 기본 row 색상
-                          },
-                        ),
-                        columns: [
-                          _centerCal('번호'),
-                          _centerCal('기관명'),
-                          _centerCal('품목명'),
-                          _centerCal('처리 상태'),
-                          _centerCal('총 수량'),
-                          _centerCal('인쇄 가능 수량'),
-                          _centerCal('발주 일시'),
-                          _centerCal('작업 처리'),
-                        ],
-                        rows:
-                            orders.asMap().entries.map((entry) {
-                              final i = entry.key;
-                              final o = entry.value;
-                              final canConfirm =
-                                  (o.status == '3' || o.status == '5');
-                              final canAllocate = o.status == '4';
-                              final canSendConfirm = o.status == '5';
-                              final sendAfterSend =
-                                  (o.status == '5' || o.status == '6');
-                              Color buttonColor;
-                              Color? borderColor;
-                              if (o.status == '3') {
-                                buttonColor = Color(0xFFFFFFFF);
-                                borderColor = Color(0xFF0246B0);
-                              } else if (o.status == '4') {
-                                buttonColor = Color(0xFF0246B0);
-                                borderColor = Color(0xFFFFFFFF);
-                              } else if (o.status == '5') {
-                                buttonColor = Color(0xFFFFFFFF);
-                                borderColor = Color(0xFF01BC90);
-                              } else if (o.status == "6") {
-                                buttonColor = Color(0xFFFFFFFF);
-                                borderColor = Color(0xFFD9D9D9);
-                              } else {
-                                buttonColor = Colors.grey;
-                              }
-                              String orderStatus;
-                              switch (o.status) {
-                                case "1":
-                                  orderStatus = "제작 대기";
-                                  break;
-                                case "2":
-                                  orderStatus = "제작 중";
-                                  break;
-                                case "3":
-                                  orderStatus = "배송 중";
-                                  break;
-                                case "4":
-                                  orderStatus = "인쇄/가공 중";
-                                  break;
-                                case "5":
-                                  orderStatus = "인쇄/가공 완료";
-                                  break;
-                                case "6":
-                                  orderStatus = "출고 완료";
-                                  break;
-                                default:
-                                  orderStatus = "제작 대기";
-                                  break;
-                              }
-
-                              return DataRow(
-                                cells: [
-                                  _centerCell('${i + 1}'),
-                                  //_centerCell(o.embeddingCode),
-                                  //_centerCell('${o.orderId}'),
-                                  _centerCell('${o.institutionName}'),
-                                  _centerCell(o.itemName),
-                                  //_centerCell(o.status),
-                                  _centerCell(orderStatus),
-                                  _centerCell('${o.quantity}'),
-                                  _centerCell('${o.remainingQuantity}'),
-                                  _centerCell(o.regDate),
-                                  _centeredButtonCell(
-                                    !canAllocate
-                                        ? ElevatedButton(
-                                          onPressed:
-                                              canConfirm
-                                                  ? () async {
-                                                    if (o.status == "3") {
-                                                      ref
-                                                          .read(
-                                                            orderListProvider
-                                                                .notifier,
-                                                          )
-                                                          .completeOrder(i);
-
-                                                      final request =
-                                                          PatchOrderRequest(
-                                                            status: "4",
-                                                          );
-
-                                                      final orderRepository =
-                                                          ref.read(
-                                                            orderRepositoryProvider,
-                                                          );
-                                                      print(
-                                                        "updateOrder request: $request, orderId: ${o.orderId}",
-                                                      );
-                                                      final response =
-                                                          await orderRepository
-                                                              .updateOrder(
-                                                                o.orderId,
-                                                                request,
-                                                              );
-                                                      print(
-                                                        "updateOrder response: $response",
-                                                      );
-                                                      /*await Future.delayed(Duration(seconds: 1), () {
-                                        print('1초 후 실행됨');
-                                      });*/
-                                                      _refreshOrderList();
-                                                    } else {
-                                                      _showSendToWarehouseDialog(
-                                                        context,
-                                                        ref,
-                                                        i,
-                                                        o.quantity,
-                                                        o.stock,
-                                                        o.orderId,
-                                                      );
-                                                      // final request = PatchOrderRequest(
-                                                      //   status: "6",
-                                                      // );
-                                                      // print("updateOrder request: $request, orderId: ${o.orderId}");
-                                                      // final orderRepository = ref.read(orderRepositoryProvider);
-                                                      // final response = await orderRepository.updateOrder(o.orderId, request);
-                                                      // print("updateOrder response: $response");
-                                                      await Future.delayed(
-                                                        Duration(seconds: 1),
-                                                        () {
-                                                          print('1초 후 실행됨');
-                                                        },
-                                                      );
-                                                      _refreshOrderList();
-
-                                                      print(
-                                                        "status 6 상태변경은 서버에서 결정",
-                                                      );
-                                                    }
-                                                  }
-                                                  : null,
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: buttonColor,
-                                            side: BorderSide(
-                                              color:
-                                                  borderColor ?? Colors.white,
-                                              width: 1.0,
-                                            ),
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(
-                                                    4,
-                                                  ), // ← 여기가 라운드 효과!
-                                            ),
-                                          ),
-                                          child: Text(
-                                            (sendAfterSend) ? '출고하기' : '수령완료',
-                                            style: TextStyle(
-                                              color: borderColor,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                        )
-                                        : ElevatedButton(
-                                          onPressed: () async {
-                                            if (o.status == "4") {
-                                              ref
-                                                  .read(
-                                                    prototypePrinterProvider
-                                                        .notifier,
-                                                  )
-                                                  .setOrder(o);
-                                              _showAllocateDialog(
-                                                context,
-                                                ref,
-                                                i,
-                                                o.quantity,
-                                                o.remainingQuantity,
-                                                o.uniqueCode,
-                                                o.orderId,
-                                                o.startCode,
-                                                o.endCode,
-                                                o.itemName,
-                                                printers,
-                                              );
-                                              await Future.delayed(
-                                                Duration(seconds: 1),
-                                                () {
-                                                  print('1초 후 실행됨');
-                                                },
-                                              );
-                                              _refreshOrderList();
-                                            } else {
-                                              _showSendToWarehouseDialog(
-                                                context,
-                                                ref,
-                                                i,
-                                                o.quantity,
-                                                o.stock,
-                                                o.orderId,
-                                              );
-                                            }
-                                            await Future.delayed(
-                                              Duration(seconds: 1),
-                                              () {
-                                                print('1초 후 실행됨');
-                                              },
-                                            );
-                                            _refreshOrderList();
-                                          },
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: buttonColor,
-                                            side: BorderSide(
-                                              color:
-                                                  borderColor ?? Colors.white,
-                                              width: 1.0,
-                                            ),
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(
-                                                    4,
-                                                  ), // ← 여기가 라운드 효과!
-                                            ),
-                                          ),
-                                          child: Text(
-                                            (o.status == "4") ? '인쇄하기' : '출고하기',
-                                            style: TextStyle(
-                                              color: borderColor,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                        ),
-                                  ),
-                                ],
-                              );
-                            }).toList(),
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            },
+        SizedBox(height: _UIConstants.headerHeight),
+        Padding(
+          padding: const EdgeInsets.only(left: _UIConstants.horizontalPadding),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text("주문 상태창", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           ),
         ),
+        Spacer(),
+        Padding(padding: const EdgeInsets.all(8.0), child: _buildRefreshButton()),
       ],
     );
   }
 
+  /// 새로고침 버튼 빌드
+  Widget _buildRefreshButton() {
+    return ElevatedButton.icon(
+      onPressed: _refreshOrderList,
+      icon: Icon(Icons.refresh, color: _UIConstants.primaryBlue),
+      label: Text('새로고침', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: _UIConstants.rowBackgroundColor,
+        foregroundColor: _UIConstants.textGray,
+        minimumSize: Size(_UIConstants.buttonMinWidth, _UIConstants.buttonHeight),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(_UIConstants.borderRadius)),
+      ),
+    );
+  }
+
+  /// 주문 테이블 빌드
+  Widget _buildOrderTable(List orders, List<ManagedPrinter> printers) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          scrollDirection: Axis.vertical,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: constraints.maxWidth),
+              child: IntrinsicWidth(
+                child: DataTable(
+                  headingRowColor: MaterialStateProperty.resolveWith<Color?>(
+                    (Set<MaterialState> states) => _UIConstants.headerBackgroundColor,
+                  ),
+                  dataRowColor: MaterialStateProperty.resolveWith<Color?>(
+                    (Set<MaterialState> states) => _UIConstants.rowBackgroundColor,
+                  ),
+                  columns: _buildTableColumns(),
+                  rows: _buildTableRows(orders, printers),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// 테이블 컬럼 빌드
+  List<DataColumn> _buildTableColumns() {
+    return [
+      _centerCal('번호'),
+      _centerCal('기관명'),
+      _centerCal('품목명'),
+      _centerCal('처리 상태'),
+      _centerCal('총 수량'),
+      _centerCal('인쇄 가능 수량'),
+      _centerCal('발주 일시'),
+      _centerCal('작업 처리'),
+    ];
+  }
+
+  /// 테이블 행 빌드
+  List<DataRow> _buildTableRows(List orders, List<ManagedPrinter> printers) {
+    return orders.asMap().entries.map((entry) {
+      final index = entry.key;
+      final order = entry.value;
+      return _buildDataRow(index, order, printers);
+    }).toList();
+  }
+
+  /// 데이터 행 빌드
+  DataRow _buildDataRow(int index, dynamic order, List<ManagedPrinter> printers) {
+    final buttonConfig = _getButtonConfig(order);
+    final orderStatus = OrderStatus.getStatusText(order.status);
+
+    return DataRow(
+      cells: [
+        _centerCell('${index + 1}'),
+        _centerCell('${order.institutionName}'),
+        _centerCell(order.itemName),
+        _centerCell(orderStatus),
+        _centerCell('${order.quantity}'),
+        _centerCell('${order.remainingQuantity}'),
+        _centerCell(order.regDate),
+        _centeredButtonCell(_buildActionButton(order, buttonConfig, printers)),
+      ],
+    );
+  }
+
+  /// 버튼 설정 정보 가져오기
+  _ButtonConfig _getButtonConfig(dynamic order) {
+    final canConfirm = (order.status == OrderStatus.shipping || order.status == OrderStatus.printingComplete);
+    final canAllocate = order.status == OrderStatus.printing;
+    final canSendConfirm = order.status == OrderStatus.printingComplete;
+    final sendAfterSend = (order.status == OrderStatus.printingComplete || order.status == OrderStatus.shipped);
+
+    Color buttonColor;
+    Color? borderColor;
+
+    switch (order.status) {
+      case OrderStatus.shipping:
+        buttonColor = _UIConstants.rowBackgroundColor;
+        borderColor = _UIConstants.darkBlue;
+        break;
+      case OrderStatus.printing:
+        buttonColor = _UIConstants.darkBlue;
+        borderColor = _UIConstants.rowBackgroundColor;
+        break;
+      case OrderStatus.printingComplete:
+        buttonColor = _UIConstants.rowBackgroundColor;
+        borderColor = _UIConstants.successGreen;
+        break;
+      case OrderStatus.shipped:
+        buttonColor = _UIConstants.rowBackgroundColor;
+        borderColor = _UIConstants.borderGray;
+        break;
+      default:
+        buttonColor = Colors.grey;
+        borderColor = null;
+    }
+
+    return _ButtonConfig(
+      canConfirm: canConfirm,
+      canAllocate: canAllocate,
+      canSendConfirm: canSendConfirm,
+      sendAfterSend: sendAfterSend,
+      buttonColor: buttonColor,
+      borderColor: borderColor,
+    );
+  }
+
+  /// 액션 버튼 빌드
+  Widget _buildActionButton(dynamic order, _ButtonConfig config, List<ManagedPrinter> printers) {
+    if (!config.canAllocate) {
+      return _buildConfirmButton(order, config);
+    } else {
+      return _buildAllocateButton(order, config, printers);
+    }
+  }
+
+  /// 수령완료/출고하기 버튼 빌드
+  Widget _buildConfirmButton(dynamic order, _ButtonConfig config) {
+    return ElevatedButton(
+      onPressed: config.canConfirm ? () => _handleConfirmAction(order) : null,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: config.buttonColor,
+        side: BorderSide(color: config.borderColor ?? Colors.white, width: 1.0),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(_UIConstants.borderRadius)),
+      ),
+      child: Text(
+        config.sendAfterSend ? '출고하기' : '수령완료',
+        style: TextStyle(color: config.borderColor, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+
+  /// 인쇄하기 버튼 빌드
+  Widget _buildAllocateButton(dynamic order, _ButtonConfig config, List<ManagedPrinter> printers) {
+    return ElevatedButton(
+      onPressed: () => _handleAllocateAction(order, printers),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: config.buttonColor,
+        side: BorderSide(color: config.borderColor ?? Colors.white, width: 1.0),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(_UIConstants.borderRadius)),
+      ),
+      child: Text(
+        (order.status == OrderStatus.printing) ? '인쇄하기' : '출고하기',
+        style: TextStyle(color: config.borderColor, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+
+  /// 수령완료/출고하기 액션 처리
+  Future<void> _handleConfirmAction(dynamic order) async {
+    if (order.status == OrderStatus.shipping) {
+      ref.read(orderListProvider.notifier).completeOrder(ref.read(orderListProvider).indexOf(order));
+
+      final request = PatchOrderRequest(status: OrderStatus.printing);
+      final orderRepository = ref.read(orderRepositoryProvider);
+      logger.i("updateOrder request: $request, orderId: ${order.orderId}");
+      final response = await orderRepository.updateOrder(order.orderId, request);
+      logger.i("updateOrder response: $response");
+      _refreshOrderList();
+    } else {
+      _showSendToWarehouseDialog(
+        context,
+        ref,
+        ref.read(orderListProvider).indexOf(order),
+        order.quantity,
+        order.stock,
+        order.orderId,
+      );
+      await Future.delayed(Duration(seconds: _UIConstants.refreshDelaySeconds.toInt()));
+      _refreshOrderList();
+      logger.i("status 6 상태변경은 서버에서 결정");
+    }
+  }
+
+  /// 인쇄하기 액션 처리
+  Future<void> _handleAllocateAction(dynamic order, List<ManagedPrinter> printers) async {
+    if (order.status == OrderStatus.printing) {
+      ref.read(prototypePrinterProvider.notifier).setOrder(order);
+      _showAllocateDialog(
+        context,
+        ref,
+        ref.read(orderListProvider).indexOf(order),
+        order.quantity,
+        order.remainingQuantity,
+        order.uniqueCode,
+        order.orderId,
+        order.startCode,
+        order.endCode,
+        order.itemName,
+        printers,
+      );
+    } else {
+      _showSendToWarehouseDialog(
+        context,
+        ref,
+        ref.read(orderListProvider).indexOf(order),
+        order.quantity,
+        order.stock,
+        order.orderId,
+      );
+    }
+    await Future.delayed(Duration(seconds: _UIConstants.refreshDelaySeconds.toInt()));
+    _refreshOrderList();
+  }
+
+  /// 인쇄하기 다이얼로그 표시
   void _showAllocateDialog(
     BuildContext context,
     WidgetRef ref,
@@ -388,23 +365,16 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
                         hint: Text('프린터 선택'),
                         items:
                             printers
-                            .where((printer) =>
-                            (printer.printStatus == "인쇄 대기" ||
-                              printer.printStatus == "인쇄 완료") &&
-                                (printer.connectStatus == "연결됨")
-                            )
-                                .map(
-                                  (printer) => DropdownMenuItem(
-                                    value: printer,
-                                    child: Text(printer.name),
-                                  ),
+                                .where(
+                                  (printer) =>
+                                      (printer.printStatus == "인쇄 대기" || printer.printStatus == "인쇄 완료") &&
+                                      (printer.connectStatus == "연결됨"),
                                 )
+                                .map((printer) => DropdownMenuItem(value: printer, child: Text(printer.name)))
                                 .toList(),
                         onChanged: (printer) {
                           setState(() => selectedPrinter = printer);
-                          ref
-                              .read(prototypePrinterProvider.notifier)
-                              .setPrinter(selectedPrinter!);
+                          ref.read(prototypePrinterProvider.notifier).setPrinter(selectedPrinter!);
                         },
                       ),
                       TextField(
@@ -418,115 +388,36 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
                     ],
                   ),
                   actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: Text('취소'),
-                    ),
+                    TextButton(onPressed: () => Navigator.pop(context), child: Text('취소')),
                     ElevatedButton(
                       onPressed: () async {
                         //final input = maxAvailable;
 
                         //0627프로토타입 이후 사용
-                        final input = int.tryParse(
-                          amountController.text.trim(),
-                        );
-                        if (input == null ||
-                            input <= 0 ||
-                            input > maxAvailable ||
-                            selectedPrinter == null) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('정확한 프린터와 유효한 할당량을 입력해주세요.'),
-                            ),
-                          );
+                        final input = int.tryParse(amountController.text.trim());
+                        if (input == null || input <= 0 || input > maxAvailable || selectedPrinter == null) {
+                          ScaffoldMessenger.of(
+                            context,
+                          ).showSnackBar(SnackBar(content: Text('정확한 프린터와 유효한 할당량을 입력해주세요.')));
                           return;
                         }
 
-                        // 1. 발주 상태 업데이트
-                        ref
-                            .read(orderListProvider.notifier)
-                            .allocateOrder(index, input);
-
-                        selectedPrinter?.item = ref
-                            .read(orderListProvider.notifier)
-                            .getItemNameByOrderId(orderId);
-                        //ref.read(orderListProvider.notifier).
-
-                        //
-
-                        final request = PrinterjobRequest(
-                          orderId: orderId,
-                          processingCompanyPrinterId: selectedPrinter!.id ?? 0,
-                          quantity: input,
+                        await _processAllocateOrder(
+                          index,
+                          input,
+                          selectedPrinter!,
+                          orderId,
+                          startCode,
+                          itemName,
+                          uniqcode,
+                          maxAvailable,
                         );
-                        print("addPrinterJob request: $request");
-                        final printerRepository = ref.read(
-                          printerRepositoryProvider,
-                        );
-                        final response = await printerRepository.addPrinterJob(
-                          request,
-                        );
-                        final jobId = response.data.jobId;
-                        print("addPrinterJob response: $response");
-                        /*final request_complete = UpdatePrinterjobRequest(
-                          status: "IN_PROGRESS",
-                          message: "인쇄 중",
-                        );*/
-                        // printerRepository.updatePrinterJob(jobId, request_complete);
-                        // await Future.delayed(Duration(seconds: 1), () {
-                        //   print('1초 후 실행됨');
-                        // });
-                        // // 2. 프린터 할당
-                        final int printingStartCode = int.parse(startCode);
-                        final int printingEndCode =
-                            int.parse(startCode) + (input - 1);
-
-                        final printerId = selectedPrinter?.id ?? 0;
-                        print(
-                          "odermanage \n prinerId: ${selectedPrinter?.id}, itemName: $itemName, startCode: $startCode, endCode: $endCode",
-                        );
-
-                        final isLastPrint = (maxAvailable == input);
-
-                        ref
-                            .read(printerListProvider.notifier)
-                            .assignPrintJob(
-                              printerId,
-                              jobId,
-                              itemName, // 필요 시 o.code나 o.item 등으로 대체 가능
-                              uniqcode,
-                              printingStartCode,
-                              // 시작 번호 (실제 로직 필요시 index나 누적값 기반으로 변경)
-                              printingEndCode, // 할당량만큼
-                              isLastPrint,
-                            );
-                        //
-                        // final request_complete2 = UpdatePrinterjobRequest(
-                        //   status: "COMPLETE",
-                        //   message: "인쇄 완료",
-                        // );
-                        // printerRepository.updatePrinterJob(jobId, request_complete2);
-                        // await Future.delayed(Duration(seconds: 1), () {
-                        //   print('1초 후 실행됨');
-                        // });
-
-                        // ref.read(printerListProvider.notifier).assignPrintJob(
-                        //   selectedPrinter!.id ??0,
-                        //   itemName, // 필요 시 o.code나 o.item 등으로 대체 가능
-                        //   int.parse(startCode), // 시작 번호 (실제 로직 필요시 index나 누적값 기반으로 변경)
-                        //   int.parse(endCode), // 할당량만큼
-                        // );
 
                         Navigator.pop(context);
-                        await Future.delayed(Duration(seconds: 1), () {
-                          print('1초 후 실행됨');
-                        });
+                        await Future.delayed(Duration(seconds: _UIConstants.refreshDelaySeconds.toInt()));
                         _refreshOrderList();
                       },
-                      child: SizedBox(
-                        width: 80,
-                        child: Center(child: Text('인쇄하기')),
-                      ),
+                      child: SizedBox(width: 80, child: Center(child: Text('인쇄하기'))),
                     ),
                   ],
                 ),
@@ -534,6 +425,50 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
     );
   }
 
+  /// 인쇄 작업 할당 처리
+  Future<void> _processAllocateOrder(
+    int index,
+    int input,
+    ManagedPrinter selectedPrinter,
+    int orderId,
+    String startCode,
+    String itemName,
+    String uniqcode,
+    int maxAvailable,
+  ) async {
+    // 1. 발주 상태 업데이트
+    ref.read(orderListProvider.notifier).allocateOrder(index, input);
+    selectedPrinter.item = ref.read(orderListProvider.notifier).getItemNameByOrderId(orderId);
+
+    // 2. 프린터 작업 생성
+    final request = PrinterjobRequest(
+      orderId: orderId,
+      processingCompanyPrinterId: selectedPrinter.id ?? 0,
+      quantity: input,
+    );
+    logger.i("addPrinterJob request: $request");
+    final printerRepository = ref.read(printerRepositoryProvider);
+    final response = await printerRepository.addPrinterJob(request);
+    final jobId = response.data.jobId;
+    logger.i("addPrinterJob response: $response");
+
+    // 3. 인쇄 코드 계산
+    final int printingStartCode = int.parse(startCode);
+    final int printingEndCode = int.parse(startCode) + (input - 1);
+    final printerId = selectedPrinter.id ?? 0;
+    final isLastPrint = (maxAvailable == input);
+
+    logger.i(
+      "orderManage \n printerId: $printerId, itemName: $itemName, startCode: $startCode, endCode: $printingEndCode",
+    );
+
+    // 4. 프린터에 작업 할당
+    ref
+        .read(printerListProvider.notifier)
+        .assignPrintJob(printerId, jobId, itemName, uniqcode, printingStartCode, printingEndCode, isLastPrint);
+  }
+
+  /// 출고하기 다이얼로그 표시
   void _showSendToWarehouseDialog(
     BuildContext context,
     WidgetRef ref,
@@ -546,7 +481,6 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
     final warehouseLocationController = TextEditingController();
     final sendAmountController = TextEditingController();
     final maxAvailable = quantity - stock;
-    ManagedPrinter? selectedPrinter;
 
     showDialog(
       context: context,
@@ -578,23 +512,18 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
                     ],
                   ),
                   actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: Text('취소'),
-                    ),
+                    TextButton(onPressed: () => Navigator.pop(context), child: Text('취소')),
                     ElevatedButton(
                       onPressed: () async {
-                        final input = int.tryParse(
-                          sendAmountController.text.trim(),
-                        );
+                        final input = int.tryParse(sendAmountController.text.trim());
                         if (input == null ||
                             input <= 0 ||
                             input > maxAvailable ||
                             warehouseNameController.text == "" ||
                             warehouseLocationController.text == "") {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('정확한 정보와 유효한 할당량을 입력해주세요.')),
-                          );
+                          ScaffoldMessenger.of(
+                            context,
+                          ).showSnackBar(SnackBar(content: Text('정확한 정보와 유효한 할당량을 입력해주세요.')));
                           return;
                         }
 
@@ -604,26 +533,16 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
                           address: warehouseLocationController.text,
                           quantity: input,
                         );
-                        print("addPrinterJob request: $request");
-                        final orderRepository = ref.read(
-                          orderRepositoryProvider,
-                        );
-                        final response = await orderRepository.sendToWarehouse(
-                          request,
-                        );
-                        //final jobId = response.data.jobId;
-                        print("addPrinterJob response: $response");
+                        logger.i("sendToWarehouse request: $request");
+                        final orderRepository = ref.read(orderRepositoryProvider);
+                        final response = await orderRepository.sendToWarehouse(request);
+                        logger.i("sendToWarehouse response: $response");
 
                         Navigator.pop(context);
-                        await Future.delayed(Duration(seconds: 1), () {
-                          print('1초 후 실행됨');
-                        });
+                        await Future.delayed(Duration(seconds: _UIConstants.refreshDelaySeconds.toInt()));
                         _refreshOrderList();
                       },
-                      child: SizedBox(
-                        width: 80,
-                        child: Center(child: Text('출고하기')),
-                      ),
+                      child: SizedBox(width: 80, child: Center(child: Text('출고하기'))),
                     ),
                   ],
                 ),
@@ -631,19 +550,37 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
     );
   }
 
-  DataCell _centerCell(String text, {double minWidth = 100}) {
-    return DataCell(
-      SizedBox(width: minWidth, child: Center(child: Text(text))),
-    );
+  /// 중앙 정렬 셀 빌드
+  DataCell _centerCell(String text, {double minWidth = _UIConstants.cellMinWidth}) {
+    return DataCell(SizedBox(width: minWidth, child: Center(child: Text(text))));
   }
 
-  DataColumn _centerCal(String text, {double minWidth = 100}) {
-    return DataColumn(
-      label: SizedBox(width: minWidth, child: Center(child: Text(text))),
-    );
+  /// 중앙 정렬 컬럼 빌드
+  DataColumn _centerCal(String text, {double minWidth = _UIConstants.cellMinWidth}) {
+    return DataColumn(label: SizedBox(width: minWidth, child: Center(child: Text(text))));
   }
 
-  DataCell _centeredButtonCell(Widget button, {double width = 120}) {
+  /// 중앙 정렬 버튼 셀 빌드
+  DataCell _centeredButtonCell(Widget button, {double width = _UIConstants.buttonCellWidth}) {
     return DataCell(SizedBox(width: width, child: Center(child: button)));
   }
+}
+
+/// 버튼 설정 정보 클래스
+class _ButtonConfig {
+  final bool canConfirm;
+  final bool canAllocate;
+  final bool canSendConfirm;
+  final bool sendAfterSend;
+  final Color buttonColor;
+  final Color? borderColor;
+
+  _ButtonConfig({
+    required this.canConfirm,
+    required this.canAllocate,
+    required this.canSendConfirm,
+    required this.sendAfterSend,
+    required this.buttonColor,
+    this.borderColor,
+  });
 }

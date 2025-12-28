@@ -1,11 +1,12 @@
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:print_manager/core/services/logger_service.dart';
 
 class DatabaseHelper {
   static Database? _db;
 
   static Future<Database> get database async {
     _db ??= await _initDb();
-    print('await _initDb();');
+    logger.i('await _initDb();');
     return _db!;
   }
 
@@ -70,7 +71,7 @@ class DatabaseHelper {
   //user
   Future<int> insertUser(Map<String, dynamic> user) async {
     final db = await database;
-    print('insert data : $user');
+    logger.i('insert data : $user');
     return await db.insert('user', user, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 

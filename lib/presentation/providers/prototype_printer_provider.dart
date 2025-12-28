@@ -7,6 +7,7 @@ import 'package:print_manager/infra/zipher_socket.dart';
 import 'package:print_manager/domain/repositories/order_repository.dart';
 import 'package:print_manager/domain/repositories/printer_repository.dart';
 import 'package:print_manager/presentation/providers/printer_list_provider.dart';
+import 'package:print_manager/core/services/logger_service.dart';
 
 
 
@@ -42,7 +43,7 @@ class PrototypePrinterNotifier extends StateNotifier<PrototypePrinterState> {
     final startCode = state.order?.startCode;
     final endCode = state.order?.endCode;
 
-    print("Printer: $printer, Order: $order, Start Code: $startCode, End Code: $endCode");
+    logger.i("Printer: $printer, Order: $order, Start Code: $startCode, End Code: $endCode");
 
     // ref.read(printerListProvider.notifier).assignPrintJob(
     //   printer?? 0,

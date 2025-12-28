@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:encrypt/encrypt.dart' as encrypt;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:print_manager/core/services/logger_service.dart';
 
 class ImageProcessorPage extends StatelessWidget {
   const ImageProcessorPage({super.key});
@@ -46,7 +47,7 @@ class ImageProcessorPage extends StatelessWidget {
               messenger.showSnackBar(SnackBar(
                 content: Text('복호화 완료 (${stopwatch.elapsedMilliseconds}ms): $decryptedPath'),
               ));
-              print('복호화 완료 (${stopwatch.elapsedMilliseconds}ms): $decryptedPath');
+              logger.i('복호화 완료 (${stopwatch.elapsedMilliseconds}ms): $decryptedPath');
             } catch (e) {
               messenger.showSnackBar(SnackBar(content: Text('오류 발생: $e')));
             }

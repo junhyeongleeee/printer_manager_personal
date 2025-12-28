@@ -3,6 +3,7 @@ import '../../domain/entities/printerjob_item.dart';
 import 'package:print_manager/data/models/response/printerjob_list_response.dart';
 import 'package:print_manager/data/mappers/printerjob_data_mapper.dart';
 import 'package:collection/collection.dart';
+import 'package:print_manager/core/services/logger_service.dart';
 
 
 final printerjobListProvider =
@@ -38,7 +39,7 @@ class PrinterjobListNotifier extends StateNotifier<List<PrinterjobItem>> {
 
     state = [...state, ...newItems];
 
-    print("🟢 PrinterjobList updated. Current size: ${state.length}");
+    logger.i("🟢 PrinterjobList updated. Current size: ${state.length}");
   }
 
   String? getStratAtByOrderId(int orderId) {

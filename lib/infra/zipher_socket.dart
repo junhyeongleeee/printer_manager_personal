@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:print_manager/data/zipher_commands.dart';
 import 'package:print_manager/core/interfaces/printer_socket.dart';
+import 'package:print_manager/core/services/logger_service.dart';
 
 class ZipherSocket implements PrinterSocket {
   Socket? _socket;
@@ -29,21 +30,21 @@ class ZipherSocket implements PrinterSocket {
     _socket = await Socket.connect(host, port);
 
     _socket!.listen(
-          (data) {
+      (data) {
         final messages = utf8.decode(data).trim().split('\r');
         for (final message in messages) {
           final trimmed = message.trim();
 
           const completionCodes = {'ACK', 'ERR'};
-          const completionPrefixCodes = {'STS','JDL', 'FLT', 'WRN', 'JOB'};
+          const completionPrefixCodes = {'STS', 'JDL', 'FLT', 'WRN', 'JOB'};
 
-          print("receive message: $trimmed");
+          logger.i("receive message: $trimmed");
 
           if (_responseCompleter != null && !_responseCompleter!.isCompleted) {
             _responseBuffer.add(trimmed);
 
             if (completionCodes.contains(trimmed) || completionPrefixCodes.any((code) => trimmed.startsWith(code))) {
-              print("응답완료");
+              logger.i("응답완료");
               _responseCompleter!.complete(_responseBuffer.join('\r'));
               _responseCompleter = null;
               _responseBuffer.clear();
@@ -53,14 +54,14 @@ class ZipherSocket implements PrinterSocket {
             onData?.call(trimmed);
           }
         }
-        print("receive end");
+        logger.i("receive end");
       },
       onDone: () {
         if (_responseCompleter != null && !_responseCompleter!.isCompleted) {
           _responseCompleter!.completeError(StateError("Socket closed before response."));
         }
         _cleanup();
-        print("receieve message done, disconnect");
+        logger.i("receieve message done, disconnect");
         onDone?.call();
       },
       onError: (error) {
@@ -68,7 +69,7 @@ class ZipherSocket implements PrinterSocket {
           _responseCompleter!.completeError(error);
         }
         _cleanup();
-        print("receieve message error, disconnect");
+        logger.i("receieve message error, disconnect");
         onError?.call(error);
       },
       cancelOnError: true,
@@ -93,7 +94,7 @@ class ZipherSocket implements PrinterSocket {
   }
 
   Future<String> send(String message, {Duration timeout = const Duration(seconds: 5)}) async {
-    print("send message: $message");
+    logger.i("send message: $message");
     return _sendInternal(message, useAckEnding: true);
   }
 
@@ -102,10 +103,10 @@ class ZipherSocket implements PrinterSocket {
   // }
 
   Future<String> _sendInternal(
-      String message, {
-        bool useAckEnding = false,
-        Duration timeout = const Duration(seconds: 15),
-      }) async {
+    String message, {
+    bool useAckEnding = false,
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
     if (_socket == null) {
       return Future.error(StateError("Socket not connected."));
     }
@@ -118,13 +119,15 @@ class ZipherSocket implements PrinterSocket {
 
     _socket!.write('$message\r');
 
-    return _responseCompleter!.future.timeout(timeout, onTimeout: () {
-      _responseCompleter = null;
-      _responseBuffer.clear();
-      throw TimeoutException("Response timeout for: $message");
-    });
+    return _responseCompleter!.future.timeout(
+      timeout,
+      onTimeout: () {
+        _responseCompleter = null;
+        _responseBuffer.clear();
+        throw TimeoutException("Response timeout for: $message");
+      },
+    );
   }
-
 
   void sendUtf16LE(String message) {
     final bytes = _encodeUtf16LE(message + '\r');
@@ -161,9 +164,7 @@ class ZipherSocket implements PrinterSocket {
   //   {'PRS', 'PRC', 'ACK'},
   // );
 
-  Future<String> printOnce() => send(
-    ZipherCommand.prn(),
-  );
+  Future<String> printOnce() => send(ZipherCommand.prn());
 
   // 오류 관련
   Future<String> clearFault() => send(ZipherCommand.caf());
