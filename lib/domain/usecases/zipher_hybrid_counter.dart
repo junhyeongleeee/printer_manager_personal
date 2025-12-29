@@ -16,6 +16,8 @@ class ZipherHybridCounter {
   int _currentCount = 0;
   DateTime? _lastUnsolicitedTime;
   String? _lastStatus;
+  bool _isVerifying = false; // 검증 중인지 추적
+  Duration _verificationInterval = const Duration(seconds: 2); // 검증 주기 저장
 
   // 콜백 함수
   Function(int count)? onCountChanged;
@@ -49,18 +51,13 @@ class ZipherHybridCounter {
     // Unsolicited Data 리스너 설정
     socket.unsolicitedData = _handleUnsolicitedData;
 
+    _verificationInterval = verificationInterval;
+
     // 초기 상태 확인
     await _verifyStatus();
 
-    // 주기적으로 상태 검증 (Unsolicited Data 누락 대비)
-    _verificationTimer = Timer.periodic(verificationInterval, (timer) async {
-      if (!_isMonitoring) {
-        timer.cancel();
-        return;
-      }
-
-      await _verifyStatus();
-    });
+    // 이전 요청 완료 후 다음 요청 스케줄링 (재귀적 방식)
+    _scheduleNextVerification();
 
     logger.i('Zipher 하이브리드 모니터링 시작 (검증 주기: ${verificationInterval.inSeconds}초)');
   }
@@ -165,12 +162,41 @@ class ZipherHybridCounter {
         upperStatus == '3'; // Zipher 상태 코드 3 = Running
   }
 
+  /// 다음 검증 스케줄링 (이전 요청 완료 후 실행)
+  void _scheduleNextVerification() {
+    if (!_isMonitoring) {
+      return;
+    }
+
+    _verificationTimer?.cancel();
+    _verificationTimer = Timer(_verificationInterval, () async {
+      if (!_isMonitoring) {
+        return;
+      }
+
+      // 검증 실행 후 완료되면 다음 검증 스케줄링
+      await _verifyStatus();
+      _scheduleNextVerification();
+    });
+  }
+
   /// 카운트 검증 (GPC 명령)
   Future<void> _verifyStatus() async {
+    // 이미 검증 중이면 스킵 (동시 실행 방지)
+    if (_isVerifying) {
+      logger.d('검증이 이미 진행 중입니다. 스킵합니다.');
+      return;
+    }
+
+    logger.i('카운트 검증 시작');
+
+    _isVerifying = true;
     try {
       // GPC로 카운트 직접 조회
       final countsResponse = await socket.getCounts();
       final counts = _parseCountsFromResponse(countsResponse);
+
+      logger.i('countsResponse: $countsResponse');
 
       if (counts != null) {
         // Unsolicited Data가 오래 안 왔으면 강제 업데이트
@@ -191,11 +217,16 @@ class ZipherHybridCounter {
         }
       }
 
+      // 이전 요청의 응답 처리가 완전히 끝날 때까지 약간의 지연
+      await Future.delayed(const Duration(milliseconds: 100));
+
       // GST로 상태도 확인 (백업)
       final statusResponse = await socket.getPrinterStatus();
       _processStatusResponse(statusResponse);
     } catch (e) {
       logger.e('카운트 검증 실패: $e');
+    } finally {
+      _isVerifying = false;
     }
   }
 

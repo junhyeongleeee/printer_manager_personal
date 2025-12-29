@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:print_manager/core/services/logger_service.dart';
 import '../providers/user_provider.dart';
-import 'package:print_manager/data/providers/api_service_provider.dart';
 import 'package:print_manager/data/models/request/login_request.dart';
 import 'package:print_manager/data/repositories/user_repository_provider.dart';
 import 'package:print_manager/data/providers/token_provider.dart';
@@ -24,57 +24,42 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   bool _isError = false;
 
   void _attemptLogin() async {
-    context.go('/home');
-    // try {
-    //   final request = LoginRequest(
-    //     userId: _idController.text,
-    //     password: _pwController.text,
-    //   );
-    //   final userRepository = ref.read(userRepositoryProvider);
-    //   final response = await userRepository.login(request);
-    //   ref
-    //       .read(tokenProvider.notifier)
-    //       .setToken(Token()..accessToken = response.data.accessToken);
-    //   print("accessToken: $response.data.accessToken");
+    // context.go('/home');
+    try {
+      final request = LoginRequest(userId: _idController.text, password: _pwController.text);
+      final userRepository = ref.read(userRepositoryProvider);
+      final response = await userRepository.login(request);
+      ref.read(tokenProvider.notifier).setToken(Token()..accessToken = response.data.accessToken);
+      logger.i("accessToken: $response.data.accessToken");
 
-    //   setState(() {
-    //     _loginFailed =
-    //         response.status != 'success'; //status = success, loginFail = false
-    //     print("_loginFailed = $_loginFailed");
-    //     //_isError = _loginFailed;
-    //     print("_isError = $_isError");
-    //     ref
-    //         .read(userProvider.notifier)
-    //         .updateUser(
-    //           User(
-    //             id: _idController.text,
-    //             pw: _pwController.text,
-    //             company: '',
-    //             name: '',
-    //             location: '',
-    //             phoneNum: '',
-    //           ),
-    //         );
-    //     print("id: ${_idController.text}, pw: ${_pwController.text}");
-    //     print(
-    //       "ref.read(userProvider).id : ${ref.read(userProvider)?.id ?? "물음표"}",
-    //     );
-    //     if (!_loginFailed) {
-    //       if (response.data.isFirst) {
-    //         context.go('/register');
-    //       } else {
-    //         // context.go('/register');
-    //        context.go('/home');
-    //       }
-    //       // context.go('/home'); // test
-    //     }
-    //   });
-    // } catch (e) {
-    //   setState(() {
-    //     _isError = true;
-    //   });
-    //   // context.go('/home'); // test
-    // }
+      setState(() {
+        _loginFailed = response.status != 'success'; //status = success, loginFail = false
+        logger.i("_loginFailed = $_loginFailed");
+        //_isError = _loginFailed;
+        logger.i("_isError = $_isError");
+        ref
+            .read(userProvider.notifier)
+            .updateUser(
+              User(id: _idController.text, pw: _pwController.text, company: '', name: '', location: '', phoneNum: ''),
+            );
+        logger.i("userId: ${_idController.text}, password: ${_pwController.text}");
+        logger.i("ref.read(userProvider).id : ${ref.read(userProvider)?.id ?? "물음표"}");
+        if (!_loginFailed) {
+          if (response.data.isFirst) {
+            context.go('/register');
+          } else {
+            // context.go('/register');
+            context.go('/home');
+          }
+          // context.go('/home'); // test
+        }
+      });
+    } catch (e) {
+      setState(() {
+        _isError = true;
+      });
+      // context.go('/home'); // test
+    }
   }
 
   OutlineInputBorder _getBorder(bool isError) {

@@ -36,7 +36,7 @@ class ZipherSocket implements PrinterSocket {
           final trimmed = message.trim();
 
           const completionCodes = {'ACK', 'ERR'};
-          const completionPrefixCodes = {'STS', 'JDL', 'FLT', 'WRN', 'JOB'};
+          const completionPrefixCodes = {'STS', 'JDL', 'FLT', 'WRN', 'JOB', 'PCS'};
 
           logger.i("receive message: $trimmed");
 
