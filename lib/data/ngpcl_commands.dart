@@ -2,8 +2,8 @@
 /// NGPCL Users Guide v25.pdf 기반
 class NGPCLCommand {
   // 메시지 구분자
-  static const String stx = '\x02'; // STX
-  static const String etx = '\x03'; // ETX
+  static const String stx = '\x02'; // STX (ASCII: 2) = ^A
+  static const String etx = '\x03'; // ETX (ASCII: 3) = ^B
   static const String messageStart = '~'; // 메시지 시작 문자
   static const String fieldDelimiter = '|'; // 필드 구분자
 
@@ -45,7 +45,7 @@ class NGPCLCommand {
   /// 필드 데이터 업데이트
   /// replyTiming: 0=즉시 응답, 1=이미징 완료 후 응답
   /// fields: {fieldName: fieldValue} 맵
-  static String jobUpdate({required int replyTiming, required Map<String, String> fields}) {
+  static String jobUpdate({int replyTiming = 0, required Map<String, String> fields}) {
     final params = [replyTiming.toString()];
     fields.forEach((name, value) {
       params.add(name);

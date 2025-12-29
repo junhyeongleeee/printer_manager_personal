@@ -149,28 +149,81 @@ class ZipherSocket implements PrinterSocket {
     _cleanup();
   }
 
-  // Zipher 명령어 헬퍼 메서드 (단일 응답 기반)
+  // ========== PrinterSocket 인터페이스 구현 ==========
+
+  @override
   Future<String> getPrinterStatus() => send(ZipherCommand.gst());
+
+  @override
   Future<String> setPrinterRunning() => send(ZipherCommand.sst('3'));
+
+  @override
   Future<String> setPrinterOffline() => send(ZipherCommand.sst('4'));
+
+  @override
   Future<String> setPrintState(int state) => send(ZipherCommand.sst('$state'));
+
+  @override
   Future<String> selectJob(String jobName) => send(ZipherCommand.sel(jobName));
+
+  @override
   Future<String> requestJobData(String field) => send(ZipherCommand.gjd(field));
+
+  @override
   Future<String> updateField(String field, String value) => send(ZipherCommand.jda(field, value));
 
-  /// 이 명령은 PRS + PRC + ACK 세 개의 응답을 예상하므로 sendMulti 사용
-  // Future<String> printOnce() => sendMulti(
-  //   ZipherCommand.prn(),
-  //   {'PRS', 'PRC', 'ACK'},
-  // );
-
+  @override
   Future<String> printOnce() => send(ZipherCommand.prn());
+
+  // ========== Zipher 전용 메서드 ==========
+
+  /// 여러 필드 업데이트 (Zipher 전용)
+  Future<String> updateFields(Map<String, String> fields) => send(ZipherCommand.jdu(fields));
+
+  /// Job 선택 및 필드 할당 (Zipher 전용)
+  Future<String> selectJobWithFields(String jobName, Map<String, String> fields) =>
+      send(ZipherCommand.sla(jobName, fields));
+
+  /// 카운트 조회 (Zipher 전용)
+  /// 응답: GPC|total|batch|...
+  Future<String> getCounts() => send(ZipherCommand.gpc());
+
+  /// 카운트 설정 (Zipher 전용)
+  Future<String> setCounts({int? total, int? batch}) => send(ZipherCommand.spc(total: total, batch: batch));
+
+  /// 큐 크기 조회 (Zipher 전용)
+  Future<String> getQueueSize() => send(ZipherCommand.qsz());
+
+  /// 큐 길이 조회 (Zipher 전용)
+  Future<String> getQueueLength() => send(ZipherCommand.qln());
+
+  /// 현재 Job 이름 조회 (Zipher 전용)
+  Future<String> getJobName() => send(ZipherCommand.gjn());
+
+  /// Job 목록 조회 (Zipher 전용)
+  Future<String> getJobList() => send(ZipherCommand.gjl());
+
+  /// Job 필드 목록 조회 (Zipher 전용)
+  Future<String> getJobFields() => send(ZipherCommand.gjf());
+
+  /// 시간 및 날짜 조회 (Zipher 전용)
+  Future<String> getTimeAndDate() => send(ZipherCommand.gtd());
+
+  /// 날짜 및 시간 설정 (Zipher 전용)
+  Future<String> setTimeAndDate(String dateTime) => send(ZipherCommand.tad(dateTime));
+
+  /// 프로토콜 버전 조회 (Zipher 전용)
+  Future<String> getVersion() => send(ZipherCommand.ver());
+
+  /// 테스트 인쇄 (Zipher 전용)
+  Future<String> testPrint() => send(ZipherCommand.tpr());
 
   // 오류 관련
   Future<String> clearFault() => send(ZipherCommand.caf());
   Future<String> getFault() => send(ZipherCommand.gft());
   Future<String> clearWarning() => send(ZipherCommand.caw());
   Future<String> getWarning() => send(ZipherCommand.gwn());
+  Future<String> clearSingleError(int errorCode) => send(ZipherCommand.cem(errorCode));
 
   @override
   void setOnData(Function(String message) callback) {

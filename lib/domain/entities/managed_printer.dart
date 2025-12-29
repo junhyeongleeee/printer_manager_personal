@@ -2,6 +2,8 @@ import 'package:print_manager/core/interfaces/printer_socket.dart';
 import 'package:print_manager/core/enums/printer_protocol.dart';
 import 'package:print_manager/core/factories/printer_socket_factory.dart';
 import 'package:print_manager/core/services/logger_service.dart';
+import 'package:print_manager/infra/zipher_socket.dart';
+import 'package:print_manager/domain/usecases/zipher_hybrid_counter.dart';
 
 class ManagedPrinter {
   final int index;
@@ -24,6 +26,9 @@ class ManagedPrinter {
   String? startDate;
   String? endDate;
 
+  // Zipher 인쇄 감지 카운터
+  ZipherHybridCounter? _printCounter;
+  int _currentPrintCount = 0;
 
   ManagedPrinter({
     required this.index,
@@ -46,6 +51,12 @@ class ManagedPrinter {
     try {
       await socket.connect(ip, port);
       _updateStatus('연결됨');
+
+      // Zipher 프로토콜일 때 인쇄 감지 모니터링 시작
+      if (protocol == PrinterProtocol.zipher && socket is ZipherSocket) {
+        _startPrintMonitoring(socket as ZipherSocket);
+      }
+
       return true;
     } catch (_) {
       _updateStatus('연결 실패');
@@ -53,13 +64,55 @@ class ManagedPrinter {
     }
   }
 
+  /// Zipher 인쇄 감지 모니터링 시작
+  void _startPrintMonitoring(ZipherSocket zipherSocket) {
+    try {
+      // 기존 카운터가 있으면 정리
+      _printCounter?.dispose();
+
+      // 새로운 하이브리드 카운터 생성 및 시작
+      _printCounter = ZipherHybridCounter(zipherSocket);
+
+      _printCounter!.startHybridMonitoring(
+        verificationInterval: const Duration(seconds: 2),
+        onCountChanged: (count) {
+          _currentPrintCount = count;
+          logger.i('[$name] 인쇄 카운트 변경: $count장');
+          // 여기서 UI 업데이트나 상태 변경 로직 추가 가능
+          _updatePrinterStatus('인쇄 중 (${count}장)');
+        },
+        onPrintStarted: () {
+          logger.i('[$name] 인쇄 시작 감지');
+          _updatePrinterStatus('인쇄 시작');
+        },
+        onPrintCompleted: () {
+          logger.i('[$name] 인쇄 완료 감지 (총: $_currentPrintCount장)');
+          _updatePrinterStatus('인쇄 완료 (${_currentPrintCount}장)');
+        },
+      );
+
+      logger.i('[$name] Zipher 인쇄 감지 모니터링 시작');
+    } catch (e) {
+      logger.e('[$name] 인쇄 감지 모니터링 시작 실패: $e');
+    }
+  }
+
+  /// 인쇄 감지 모니터링 중지
+  void stopPrintMonitoring() {
+    _printCounter?.dispose();
+    _printCounter = null;
+    logger.i('[$name] 인쇄 감지 모니터링 중지');
+  }
+
+  /// 현재 인쇄 카운트 조회
+  int get currentPrintCount => _currentPrintCount;
+
   Future<void> sendPrintJob(String jobName, int start, int end) async {
     logger.i("sendPrinterJob Start");
     final field = 'Field00';
     final jobName = "0611textTest";
     await socket.setPrinterRunning();
     _updatePrinterStatus("인쇄 중");
-
 
     Future.delayed(Duration(milliseconds: 200)).then((_) async {
       for (int i = start; i <= end; i++) {
@@ -75,6 +128,7 @@ class ManagedPrinter {
     _updatePrinterStatus("인쇄 완료");
     //repository.updatePrinterJob(index);
   }
+
   String toSixDigitHex(int number) {
     return number.toRadixString(16).padLeft(6, '0').toUpperCase();
   }
@@ -88,7 +142,7 @@ class ManagedPrinter {
     required String jobName,
     required String uniqueCode,
     required int start,
-    required int end
+    required int end,
   }) async {
     if (!socket.isConnected) throw Exception('Not connected to printer');
     final field = 'Field00';
@@ -101,7 +155,7 @@ class ManagedPrinter {
       await socket.selectJob(jobName);
       await socket.requestJobData(field);
 
-      final printString = uniqueCode+toSixDigitHex(i);
+      final printString = uniqueCode + toSixDigitHex(i);
       //final printString = toSixDigitHex(i);
       logger.i("printString : $printString");
       await socket.updateField(field, printString);
@@ -133,7 +187,8 @@ class ManagedPrinter {
     // 여기서 notifyListeners(), state 갱신 등 처리 필요
   }
 
-  Future<void> dispose() async {
+  void dispose() {
+    stopPrintMonitoring();
     socket.dispose();
   }
 
@@ -163,4 +218,3 @@ class ManagedPrinter {
     if (completePrintWork != null) this.completePrintWork = completePrintWork;
   }
 }
-

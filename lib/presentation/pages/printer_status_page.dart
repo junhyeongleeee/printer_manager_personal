@@ -260,7 +260,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
 
     _confirmRemovePrinter(context, selectedPrinter!);
     final printerRepository = ref.read(printerRepositoryProvider);
-    await selectedPrinter!.dispose();
+    selectedPrinter!.dispose();
     logger.i("selectedPrinter!.index: ${selectedPrinter!.id}");
     await printerRepository.deletePrinter(selectedPrinter!.id ?? 0);
     await ref.read(printerListProvider.notifier).removePrinter(selectedPrinter!);

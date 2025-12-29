@@ -25,7 +25,7 @@ class PrinterListNotifier extends StateNotifier<List<ManagedPrinter>> {
 
   Future<void> removePrinter(ManagedPrinter printer) async {
     //printer.dispose(); // 소켓 연결 해제
-    await state.where((p) => p == printer).first.dispose();
+    state.where((p) => p == printer).first.dispose();
     state = state.where((p) => p != printer).toList(); // 리스트에서 제거
   }
 
