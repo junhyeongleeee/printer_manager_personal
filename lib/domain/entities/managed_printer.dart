@@ -30,6 +30,9 @@ class ManagedPrinter {
   ZipherHybridCounter? _printCounter;
   int _currentPrintCount = 0;
 
+  // 카운트 변경 콜백 (UI 업데이트용)
+  Function(ManagedPrinter)? onCountUpdate;
+
   ManagedPrinter({
     required this.index,
     required this.id,
@@ -74,12 +77,14 @@ class ManagedPrinter {
       _printCounter = ZipherHybridCounter(zipherSocket);
 
       _printCounter!.startHybridMonitoring(
-        verificationInterval: const Duration(seconds: 2),
+        verificationInterval: const Duration(microseconds: 500),
         onCountChanged: (count) {
           _currentPrintCount = count;
           logger.i('[$name] 인쇄 카운트 변경: $count장');
           // 여기서 UI 업데이트나 상태 변경 로직 추가 가능
           _updatePrinterStatus('인쇄 중 (${count}장)');
+          // UI 업데이트 콜백 호출
+          onCountUpdate?.call(this);
         },
         onPrintStarted: () {
           logger.i('[$name] 인쇄 시작 감지');
@@ -87,7 +92,7 @@ class ManagedPrinter {
         },
         onPrintCompleted: () {
           logger.i('[$name] 인쇄 완료 감지 (총: $_currentPrintCount장)');
-          _updatePrinterStatus('인쇄 완료 (${_currentPrintCount}장)');
+          _updatePrinterStatus('인쇄 완료 ($_currentPrintCount장)');
         },
       );
 

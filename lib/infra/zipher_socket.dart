@@ -38,13 +38,13 @@ class ZipherSocket implements PrinterSocket {
           const completionCodes = {'ACK', 'ERR'};
           const completionPrefixCodes = {'STS', 'JDL', 'FLT', 'WRN', 'JOB', 'PCS'};
 
-          logger.i("receive message: $trimmed");
+          // logger.i("receive message: $trimmed");
 
           if (_responseCompleter != null && !_responseCompleter!.isCompleted) {
             _responseBuffer.add(trimmed);
 
             if (completionCodes.contains(trimmed) || completionPrefixCodes.any((code) => trimmed.startsWith(code))) {
-              logger.i("응답완료");
+              // logger.i("응답완료");
               _responseCompleter!.complete(_responseBuffer.join('\r'));
               _responseCompleter = null;
               _responseBuffer.clear();
@@ -54,14 +54,14 @@ class ZipherSocket implements PrinterSocket {
             onData?.call(trimmed);
           }
         }
-        logger.i("receive end");
+        // logger.i("receive end");
       },
       onDone: () {
         if (_responseCompleter != null && !_responseCompleter!.isCompleted) {
           _responseCompleter!.completeError(StateError("Socket closed before response."));
         }
         _cleanup();
-        logger.i("receieve message done, disconnect");
+        // logger.i("receieve message done, disconnect");
         onDone?.call();
       },
       onError: (error) {
@@ -69,7 +69,7 @@ class ZipherSocket implements PrinterSocket {
           _responseCompleter!.completeError(error);
         }
         _cleanup();
-        logger.i("receieve message error, disconnect");
+        // logger.i("receieve message error, disconnect");
         onError?.call(error);
       },
       cancelOnError: true,
@@ -94,7 +94,7 @@ class ZipherSocket implements PrinterSocket {
   }
 
   Future<String> send(String message, {Duration timeout = const Duration(seconds: 5)}) async {
-    logger.i("send message: $message");
+    // logger.i("send message: $message");
     return _sendInternal(message, useAckEnding: true);
   }
 

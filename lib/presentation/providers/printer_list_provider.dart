@@ -44,6 +44,11 @@ class PrinterListNotifier extends StateNotifier<List<ManagedPrinter>> {
     state = [];
   }
 
+  /// 상태 갱신 (카운트 변경 등으로 인한 UI 업데이트용)
+  void refreshState() {
+    state = [...state];
+  }
+
   //test job
   void testPrint({String jobName = "0625yi6", String code = "1234564568911", int start = 0, int end = 1}) {
     _useCase = ref.read(printJobUseCaseProvider);

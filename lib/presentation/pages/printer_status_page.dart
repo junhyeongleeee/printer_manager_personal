@@ -5,6 +5,7 @@ import '../../domain/entities/managed_printer.dart';
 import 'package:print_manager/data/models/request/printers_request.dart';
 import 'package:print_manager/data/repositories/printer_repository_provider.dart';
 import 'package:print_manager/core/services/logger_service.dart';
+import 'package:print_manager/core/enums/printer_protocol.dart';
 
 class PrinterStatusPage extends ConsumerStatefulWidget {
   @override
@@ -63,7 +64,20 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     for (final printer in printerList) {
       final response = await printer.connect();
       logger.i("initConnection- printer: $printer, connection: $response");
+      // 카운트 변경 시 UI 업데이트를 위한 콜백 설정
+      _setupCountUpdateCallback(printer);
     }
+  }
+
+  /// 카운트 업데이트 콜백 설정
+  void _setupCountUpdateCallback(ManagedPrinter printer) {
+    printer.onCountUpdate = (updatedPrinter) {
+      // provider state를 업데이트하여 UI 갱신
+      if (mounted) {
+        ref.read(printerListProvider.notifier).refreshState();
+        setState(() {}); // 선택된 프린터 정보도 갱신
+      }
+    };
   }
 
   @override
@@ -185,6 +199,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
       _centerCal('연결 상태'),
       _centerCal('프린터 상태'),
       _centerCal('인쇄 현황'),
+      _centerCal('인쇄 카운트', minWidth: 120),
       _centerCal('시작 일시'),
       _centerCal('완료 일시'),
     ];
@@ -216,6 +231,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
         DataCell(Center(child: Text(printer.connectStatus))),
         DataCell(Center(child: Text(printer.status ?? ''))),
         DataCell(Center(child: Text(printer.printStatus ?? ''))),
+        DataCell(Center(child: _buildCountCell(printer))),
         DataCell(Center(child: Text(printer.startDate ?? ''))),
         DataCell(Center(child: Text(printer.endDate ?? ''))),
       ],
@@ -245,7 +261,67 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
         Text('프린터명: ${selectedPrinter!.name}'),
         Text('상태: ${selectedPrinter!.connectStatus}'),
         Text('품목: ${selectedPrinter!.item ?? "-"}'),
+        SizedBox(height: 8),
+        _buildCountInfo(selectedPrinter!),
       ],
+    );
+  }
+
+  /// 카운트 셀 빌드
+  Widget _buildCountCell(ManagedPrinter printer) {
+    // Zipher 프로토콜일 때만 카운트 표시
+    if (printer.protocol == PrinterProtocol.zipher) {
+      final count = printer.currentPrintCount;
+      return Container(
+        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: count > 0 ? Color(0xFFE3F2FD) : Colors.grey[100],
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          '$count장',
+          style: TextStyle(fontWeight: FontWeight.bold, color: count > 0 ? Color(0xFF1976D2) : Colors.grey[600]),
+        ),
+      );
+    }
+    return Text('-');
+  }
+
+  /// 카운트 정보 빌드 (상세 섹션용)
+  Widget _buildCountInfo(ManagedPrinter printer) {
+    if (printer.protocol != PrinterProtocol.zipher) {
+      return SizedBox.shrink();
+    }
+
+    final count = printer.currentPrintCount;
+    return Container(
+      padding: EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Color(0xFFF5F5F5),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Color(0xFFE0E0E0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('인쇄 카운트', style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.w500)),
+          SizedBox(height: 4),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '$count장',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: count > 0 ? Color(0xFF1976D2) : Colors.grey[600],
+                ),
+              ),
+              if (count > 0) Icon(Icons.check_circle, color: Color(0xFF4CAF50), size: 20),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -437,6 +513,8 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     logger.i("connected: $connected");
 
     if (connected) {
+      // 카운트 업데이트 콜백 설정
+      _setupCountUpdateCallback(printer);
       await _savePrinterToServer(ref, printer, name, ip, port);
       Navigator.pop(context);
     } else {

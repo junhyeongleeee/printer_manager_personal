@@ -1,5 +1,9 @@
+import 'enums/zipher_command_enum.dart';
+
 /// Zipher Text Communications Protocol v1.37 기반 명령어 클래스
 /// Zipher Text Communications Protocol v1.37 1.pdf 참조
+///
+/// 하위 호환성을 위해 유지되며, 내부적으로 ZipherCommandEnum을 사용합니다.
 class ZipherCommand {
   // ========== 상태 관련 ==========
 
@@ -7,18 +11,18 @@ class ZipherCommand {
   /// 상태 조회
   /// 응답: STS|상태코드|...|
   /// 상태 코드: 0=Shutdown, 1=Ready, 2=Error, 3=Running, 4=Offline
-  static String gst() => 'GST';
+  static String gst() => ZipherCommandEnum.gst.build();
 
   /// Set State Command (SST)
   /// 상태 설정
   /// mode: 0=Pause, 1=Ready, 3=Running, 4=Offline
-  static String sst(String mode) => 'SST|$mode|';
+  static String sst(String mode) => ZipherCommandEnum.sst.buildWithParam(mode);
 
   // ========== Job 관련 ==========
 
   /// Job Select (SEL)
   /// Job 선택
-  static String sel(String jobName) => 'SEL|$jobName|';
+  static String sel(String jobName) => ZipherCommandEnum.sel.buildWithParam(jobName);
 
   /// Job Select with Line Assignment (SLA)
   /// Job 선택 및 라인 할당
@@ -29,40 +33,34 @@ class ZipherCommand {
     fields.forEach((name, value) {
       params.add('$name=$value');
     });
-    return 'SLA|${params.join('|')}|';
+    return ZipherCommandEnum.sla.buildWithParams(params);
   }
 
   /// Job Select with Line Index (SLI)
   /// 라인 인덱스로 Job 선택
-  static String sli(int lineIndex) => 'SLI|$lineIndex|';
+  static String sli(int lineIndex) => ZipherCommandEnum.sli.buildWithParam(lineIndex.toString());
 
   /// Interactive Job Selection (IJS)
   /// 대화형 Job 선택
-  static String ijs() => 'IJS';
+  static String ijs() => ZipherCommandEnum.ijs.build();
 
   // ========== Job Data 관련 ==========
 
   /// Get Job Data (GJD)
   /// 현재 Job의 필드 데이터 조회
   /// field: 필드 이름 (예: "Serial")
-  static String gjd(String field) => 'GJD|$field|';
+  static String gjd(String field) => ZipherCommandEnum.gjd.buildWithParam(field);
 
   /// Job Data Update (JDU)
   /// Job 데이터 업데이트 (여러 필드)
   /// fields: {fieldName: fieldValue} 맵
-  static String jdu(Map<String, String> fields) {
-    final params = <String>[];
-    fields.forEach((name, value) {
-      params.add('$name=$value');
-    });
-    return 'JDU|${params.join('|')}|';
-  }
+  static String jdu(Map<String, String> fields) => ZipherCommandEnum.jdu.buildWithFields(fields);
 
   /// Job Data Assignment (JDA)
   /// 필드 데이터 할당
   /// field: 필드 이름
   /// value: 필드 값
-  static String jda(String field, String value) => 'JDA|$field=$value|';
+  static String jda(String field, String value) => ZipherCommandEnum.jda.buildWithParams([field, value]);
 
   /// Job Data Insert (JDI)
   /// 필드 데이터 삽입
@@ -113,7 +111,7 @@ class ZipherCommand {
   /// Print Command (PRN)
   /// 인쇄 실행
   /// 응답: PRS (Print Start), PRC (Print Complete), ACK
-  static String prn() => 'PRN';
+  static String prn() => ZipherCommandEnum.prn.build();
 
   /// Test Print (TPR)
   /// 테스트 인쇄
@@ -136,7 +134,7 @@ class ZipherCommand {
   /// Get Counts Command (GPC)
   /// 카운트 값 조회
   /// 응답 형식: GPC|total|batch|...
-  static String gpc() => 'GPC';
+  static String gpc() => ZipherCommandEnum.gpc.build();
 
   /// Set Counts Command (SPC)
   /// 카운트 값 설정

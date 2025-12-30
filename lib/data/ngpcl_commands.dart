@@ -1,5 +1,9 @@
+import 'enums/ngpcl_command_enum.dart';
+
 /// NGPCL 프로토콜 명령어 생성 헬퍼
 /// NGPCL Users Guide v25.pdf 기반
+/// 
+/// 하위 호환성을 위해 유지되며, 내부적으로 NGPCLCommandEnum을 사용합니다.
 class NGPCLCommand {
   // 메시지 구분자
   static const String stx = '\x02'; // STX (ASCII: 2) = ^A
@@ -33,13 +37,11 @@ class NGPCLCommand {
 
   /// NAK (Negative Acknowledgment)
   /// 에러 응답
-  static String nak() => '~NAK';
+  static String nak() => NGPCLCommandEnum.nak.build();
 
   /// Job Select (~JS)
   /// Job 선택
-  static String jobSelect(String jobName) {
-    return _formatMessage('JS', [jobName]);
-  }
+  static String jobSelect(String jobName) => NGPCLCommandEnum.jobSelect.buildWithParam(jobName);
 
   /// Job Update (~JU)
   /// 필드 데이터 업데이트
@@ -51,14 +53,14 @@ class NGPCLCommand {
       params.add(name);
       params.add(value);
     });
-    return _formatMessage('JU', params);
+    return NGPCLCommandEnum.jobUpdate.buildWithParams(params);
   }
 
   /// Print Status Request (~PS)
   /// 프린트 상태 요청
   /// replyTiming: 0=즉시 응답, 1=프린트 준비 완료 후 응답
   static String printStatusRequest({int replyTiming = 0}) {
-    return _formatMessage('PS', [replyTiming.toString()]);
+    return NGPCLCommandEnum.printStatusRequest.buildWithParam(replyTiming.toString());
   }
 
   /// Print Request (~PG)
@@ -66,40 +68,34 @@ class NGPCLCommand {
   /// replyTiming: 0=즉시, 1=인쇄 시작 후, 2=인쇄 완료 후
   /// count: 인쇄 횟수 (기본 1)
   static String printRequest({int replyTiming = 0, int count = 1}) {
-    return _formatMessage('PG', [replyTiming.toString(), count.toString()]);
+    return NGPCLCommandEnum.printRequest.buildWithParams([replyTiming.toString(), count.toString()]);
   }
 
   /// Device Status Request (~DS)
   /// 디바이스 상태 요청
-  static String deviceStatusRequest() {
-    return _formatMessage('DS', []);
-  }
+  static String deviceStatusRequest() => NGPCLCommandEnum.deviceStatusRequest.build();
 
   /// Counts Request (~CR)
   /// 카운트 값 요청
-  static String countsRequest() {
-    return _formatMessage('CR', []);
-  }
+  static String countsRequest() => NGPCLCommandEnum.countsRequest.build();
 
   /// State Change (~SC)
   /// 상태 변경
   /// state: PRODUCING, READY, HELD 등
-  static String stateChange(String state) {
-    return _formatMessage('SC', [state]);
-  }
+  static String stateChange(String state) => NGPCLCommandEnum.stateChange.buildWithParam(state);
 
   // ========== 설정 관련 ==========
 
   /// Setting Change (~ST)
   /// 설정 변경
   static String settingChange(String settingName, String value) {
-    return _formatMessage('ST', [settingName, value]);
+    return NGPCLCommandEnum.settingChange.buildWithParams([settingName, value]);
   }
 
   /// Setting Request (~SR)
   /// 설정 요청
   static String settingRequest(String settingName) {
-    return _formatMessage('SR', [settingName]);
+    return NGPCLCommandEnum.settingRequest.buildWithParam(settingName);
   }
 
   // ========== 필드 관련 ==========
@@ -107,7 +103,7 @@ class NGPCLCommand {
   /// Field Contents Request (~FC)
   /// 필드 내용 요청
   static String fieldContentsRequest(String fieldName) {
-    return _formatMessage('FC', [fieldName]);
+    return NGPCLCommandEnum.fieldContentsRequest.buildWithParam(fieldName);
   }
 
   /// Logged Field Contents Request (~LF)
@@ -178,13 +174,13 @@ class NGPCLCommand {
   /// 원격 퍼지 (5600/5800 전용)
   /// printhead: "PH1" 또는 "PH2"
   static String remotePurge(String printhead) {
-    return _formatMessage('UC', ['RP', printhead]);
+    return NGPCLCommandEnum.remotePurge.buildUserCommand('RP', [printhead]);
   }
 
   /// Clear Print Queue (~UC CPQ)
   /// 프린트 큐 클리어 (5600/5800 전용)
   static String clearPrintQueue() {
-    return _formatMessage('UC', ['CPQ']);
+    return NGPCLCommandEnum.clearPrintQueue.buildUserCommand('CPQ');
   }
 
   // ========== Job Preview (5800 전용) ==========
