@@ -47,25 +47,39 @@ class OrderStatus {
   }
 }
 
-/// UI 상수
+/// UI 상수 (Windows UI 스타일)
 class _UIConstants {
   static const double headerHeight = 84.0;
-  static const double horizontalPadding = 50.0;
+  static const double horizontalPadding = 16.0;
   static const double buttonMinWidth = 94.0;
-  static const double buttonHeight = 40.0;
-  static const double borderRadius = 4.0;
+  static const double buttonHeight = 32.0;
+  static const double borderRadius = 2.0; // Windows 스타일
   static const double cellMinWidth = 100.0;
   static const double buttonCellWidth = 120.0;
   static const double refreshDelaySeconds = 1.0;
 
-  // 색상
-  static const Color headerBackgroundColor = Color(0xFFF9FAFB);
+  // 폰트 패밀리
+  static const String fontFamily = 'Pretendard';
+
+  // 텍스트 스타일 헬퍼 메서드
+  static TextStyle textStyle({double? fontSize, FontWeight? fontWeight, Color? color, String? fontFamily}) {
+    return TextStyle(
+      fontSize: fontSize,
+      fontWeight: fontWeight,
+      color: color,
+      fontFamily: fontFamily ?? _UIConstants.fontFamily,
+    );
+  }
+
+  // Windows 색상
+  static const Color headerBackgroundColor = Color(0xFFE8E8E8); // Windows 스타일
   static const Color rowBackgroundColor = Color(0xFFFFFFFF);
-  static const Color primaryBlue = Color(0xFF1A66EB);
-  static const Color darkBlue = Color(0xFF0246B0);
-  static const Color successGreen = Color(0xFF01BC90);
+  static const Color primaryBlue = Color(0xFF0078D4); // Windows Blue
+  static const Color darkBlue = Color(0xFF005A9E);
+  static const Color successGreen = Color(0xFF4CAF50);
   static const Color textGray = Color(0xFF3A3A3C);
-  static const Color borderGray = Color(0xFFD9D9D9);
+  static const Color borderGray = Color(0xFFADADAD); // Windows border color
+  static const Color backgroundColor = Color(0xFFF0F0F0); // Windows background
 }
 
 class _OrderManagePageState extends ConsumerState<OrderManagePage> {
@@ -87,36 +101,45 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
     final orders = ref.watch(orderListProvider);
     final printers = ref.watch(printerListProvider);
 
-    return Column(children: [_buildHeader(), Expanded(child: _buildOrderTable(orders, printers))]);
+    return Container(
+      color: _UIConstants.backgroundColor,
+      child: Column(children: [_buildHeader(), Expanded(child: _buildOrderTable(orders, printers))]),
+    );
   }
 
   /// 헤더 영역 빌드
   Widget _buildHeader() {
-    return Row(
-      children: [
-        SizedBox(height: _UIConstants.headerHeight),
-        Padding(
-          padding: const EdgeInsets.only(left: _UIConstants.horizontalPadding),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text("주문 상태창", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+    return Container(
+      height: _UIConstants.headerHeight,
+      padding: EdgeInsets.symmetric(horizontal: _UIConstants.horizontalPadding),
+      decoration: BoxDecoration(
+        color: _UIConstants.headerBackgroundColor,
+        border: Border(bottom: BorderSide(color: _UIConstants.borderGray, width: 1)),
+      ),
+      child: Row(
+        children: [
+          Text(
+            "주문 상태창",
+            style: _UIConstants.textStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.grey[900]),
           ),
-        ),
-        Spacer(),
-        Padding(padding: const EdgeInsets.all(8.0), child: _buildRefreshButton()),
-      ],
+          Spacer(),
+          _buildRefreshButton(),
+        ],
+      ),
     );
   }
 
   /// 새로고침 버튼 빌드
   Widget _buildRefreshButton() {
-    return ElevatedButton.icon(
+    return OutlinedButton.icon(
       onPressed: _refreshOrderList,
-      icon: Icon(Icons.refresh, color: _UIConstants.primaryBlue),
-      label: Text('새로고침', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-      style: ElevatedButton.styleFrom(
+      icon: Icon(Icons.refresh, size: 16),
+      label: Text('새로고침', style: _UIConstants.textStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+      style: OutlinedButton.styleFrom(
         backgroundColor: _UIConstants.rowBackgroundColor,
         foregroundColor: _UIConstants.textGray,
+        side: BorderSide(color: _UIConstants.borderGray),
+        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         minimumSize: Size(_UIConstants.buttonMinWidth, _UIConstants.buttonHeight),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(_UIConstants.borderRadius)),
       ),
@@ -125,30 +148,43 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
 
   /// 주문 테이블 빌드
   Widget _buildOrderTable(List orders, List<ManagedPrinter> printers) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return SingleChildScrollView(
-          scrollDirection: Axis.vertical,
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minWidth: constraints.maxWidth),
-              child: IntrinsicWidth(
-                child: DataTable(
-                  headingRowColor: MaterialStateProperty.resolveWith<Color?>(
-                    (Set<MaterialState> states) => _UIConstants.headerBackgroundColor,
+    return Container(
+      margin: EdgeInsets.all(_UIConstants.horizontalPadding),
+      decoration: BoxDecoration(
+        color: _UIConstants.rowBackgroundColor,
+        border: Border.all(color: _UIConstants.borderGray, width: 1),
+        borderRadius: BorderRadius.circular(_UIConstants.borderRadius),
+        boxShadow: [
+          BoxShadow(color: Colors.black12, blurRadius: 2, offset: Offset(0, 1)),
+        ],
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            scrollDirection: Axis.vertical,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                child: IntrinsicWidth(
+                  child: DataTable(
+                    headingRowColor: MaterialStateProperty.resolveWith<Color?>(
+                      (Set<MaterialState> states) => _UIConstants.headerBackgroundColor,
+                    ),
+                    dataRowColor: MaterialStateProperty.resolveWith<Color?>(
+                      (Set<MaterialState> states) => _UIConstants.rowBackgroundColor,
+                    ),
+                    headingRowHeight: 48,
+                    dataRowHeight: 56,
+                    columns: _buildTableColumns(),
+                    rows: _buildTableRows(orders, printers),
                   ),
-                  dataRowColor: MaterialStateProperty.resolveWith<Color?>(
-                    (Set<MaterialState> states) => _UIConstants.rowBackgroundColor,
-                  ),
-                  columns: _buildTableColumns(),
-                  rows: _buildTableRows(orders, printers),
                 ),
               ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 
@@ -164,6 +200,21 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
       _centerCal('발주 일시'),
       _centerCal('작업 처리'),
     ];
+  }
+
+  /// 중앙 정렬 컬럼 빌드 (폰트 적용)
+  DataColumn _centerCal(String text, {double minWidth = _UIConstants.cellMinWidth}) {
+    return DataColumn(
+      label: SizedBox(
+        width: minWidth,
+        child: Center(
+          child: Text(
+            text,
+            style: _UIConstants.textStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.grey[900]),
+          ),
+        ),
+      ),
+    );
   }
 
   /// 테이블 행 빌드
@@ -256,7 +307,7 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
       ),
       child: Text(
         config.sendAfterSend ? '출고하기' : '수령완료',
-        style: TextStyle(color: config.borderColor, fontWeight: FontWeight.w600),
+        style: _UIConstants.textStyle(color: config.borderColor, fontWeight: FontWeight.w600),
       ),
     );
   }
@@ -272,7 +323,7 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
       ),
       child: Text(
         (order.status == OrderStatus.printing) ? '인쇄하기' : '출고하기',
-        style: TextStyle(color: config.borderColor, fontWeight: FontWeight.w600),
+        style: _UIConstants.textStyle(color: config.borderColor, fontWeight: FontWeight.w600),
       ),
     );
   }
@@ -357,12 +408,12 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
           (context) => StatefulBuilder(
             builder:
                 (context, setState) => AlertDialog(
-                  title: Text('인쇄하기'),
+                  title: Text('인쇄하기', style: _UIConstants.textStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   content: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       DropdownButtonFormField<ManagedPrinter>(
-                        hint: Text('프린터 선택'),
+                        hint: Text('프린터 선택', style: _UIConstants.textStyle()),
                         items:
                             printers
                                 .where(
@@ -370,7 +421,7 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
                                       (printer.printStatus == "인쇄 대기" || printer.printStatus == "인쇄 완료") &&
                                       (printer.connectStatus == "연결됨"),
                                 )
-                                .map((printer) => DropdownMenuItem(value: printer, child: Text(printer.name)))
+                                .map((printer) => DropdownMenuItem(value: printer, child: Text(printer.name, style: _UIConstants.textStyle())))
                                 .toList(),
                         onChanged: (printer) {
                           setState(() => selectedPrinter = printer);
@@ -383,12 +434,15 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
                         keyboardType: TextInputType.number,
                       ),
                       SizedBox(height: 8),
-                      Text('인쇄 가능량: $maxAvailable'),
+                      Text('인쇄 가능량: $maxAvailable', style: _UIConstants.textStyle()),
                       //Text('인쇄 수량: $maxAvailable'),
                     ],
                   ),
                   actions: [
-                    TextButton(onPressed: () => Navigator.pop(context), child: Text('취소')),
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: Text('취소', style: _UIConstants.textStyle()),
+                    ),
                     ElevatedButton(
                       onPressed: () async {
                         //final input = maxAvailable;
@@ -398,7 +452,7 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
                         if (input == null || input <= 0 || input > maxAvailable || selectedPrinter == null) {
                           ScaffoldMessenger.of(
                             context,
-                          ).showSnackBar(SnackBar(content: Text('정확한 프린터와 유효한 할당량을 입력해주세요.')));
+                          ).showSnackBar(SnackBar(content: Text('정확한 프린터와 유효한 할당량을 입력해주세요.', style: _UIConstants.textStyle())));
                           return;
                         }
 
@@ -417,7 +471,7 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
                         await Future.delayed(Duration(seconds: _UIConstants.refreshDelaySeconds.toInt()));
                         _refreshOrderList();
                       },
-                      child: SizedBox(width: 80, child: Center(child: Text('인쇄하기'))),
+                      child: SizedBox(width: 80, child: Center(child: Text('인쇄하기', style: _UIConstants.textStyle()))),
                     ),
                   ],
                 ),
@@ -488,7 +542,7 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
           (context) => StatefulBuilder(
             builder:
                 (context, setState) => AlertDialog(
-                  title: Text('출고하기'),
+                  title: Text('출고하기', style: _UIConstants.textStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   content: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -508,11 +562,14 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
                         keyboardType: TextInputType.number,
                       ),
                       SizedBox(height: 8),
-                      Text('출고 가능 수량: $maxAvailable'),
+                      Text('출고 가능 수량: $maxAvailable', style: _UIConstants.textStyle()),
                     ],
                   ),
                   actions: [
-                    TextButton(onPressed: () => Navigator.pop(context), child: Text('취소')),
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: Text('취소', style: _UIConstants.textStyle()),
+                    ),
                     ElevatedButton(
                       onPressed: () async {
                         final input = int.tryParse(sendAmountController.text.trim());
@@ -523,7 +580,7 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
                             warehouseLocationController.text == "") {
                           ScaffoldMessenger.of(
                             context,
-                          ).showSnackBar(SnackBar(content: Text('정확한 정보와 유효한 할당량을 입력해주세요.')));
+                          ).showSnackBar(SnackBar(content: Text('정확한 정보와 유효한 할당량을 입력해주세요.', style: _UIConstants.textStyle())));
                           return;
                         }
 
@@ -542,7 +599,7 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
                         await Future.delayed(Duration(seconds: _UIConstants.refreshDelaySeconds.toInt()));
                         _refreshOrderList();
                       },
-                      child: SizedBox(width: 80, child: Center(child: Text('출고하기'))),
+                      child: SizedBox(width: 80, child: Center(child: Text('출고하기', style: _UIConstants.textStyle()))),
                     ),
                   ],
                 ),
@@ -550,14 +607,19 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
     );
   }
 
-  /// 중앙 정렬 셀 빌드
+  /// 중앙 정렬 셀 빌드 (폰트 적용)
   DataCell _centerCell(String text, {double minWidth = _UIConstants.cellMinWidth}) {
-    return DataCell(SizedBox(width: minWidth, child: Center(child: Text(text))));
-  }
-
-  /// 중앙 정렬 컬럼 빌드
-  DataColumn _centerCal(String text, {double minWidth = _UIConstants.cellMinWidth}) {
-    return DataColumn(label: SizedBox(width: minWidth, child: Center(child: Text(text))));
+    return DataCell(
+      SizedBox(
+        width: minWidth,
+        child: Center(
+          child: Text(
+            text,
+            style: _UIConstants.textStyle(fontSize: 13, color: Colors.grey[800]),
+          ),
+        ),
+      ),
+    );
   }
 
   /// 중앙 정렬 버튼 셀 빌드

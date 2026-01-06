@@ -200,7 +200,7 @@ class ManagedPrinter extends ChangeNotifier {
       _printCounter = ZipherHybridCounter(zipherSocket);
 
       _printCounter!.startHybridMonitoring(
-        jobName: "____sacheon_2",
+        jobName: "____sacheon_1",
         fieldName: "Field00",
         verificationInterval: const Duration(milliseconds: 200),
         onCountChanged: (count) {

@@ -12,26 +12,78 @@ class PrinterStatusPage extends ConsumerStatefulWidget {
   ConsumerState<PrinterStatusPage> createState() => _PrinterStatusPageState();
 }
 
-/// UI 상수
-class _PrinterStatusUIConstants {
-  static const double headerHeight = 80.0;
-  static const double horizontalPadding = 24.0;
-  static const double cardSpacing = 16.0;
-  static const double cardBorderRadius = 12.0;
-  static const double buttonHeight = 36.0;
-  static const double buttonBorderRadius = 8.0;
+// 프린터 상태 타입 (React 프로젝트와 동일)
+enum PrinterStatusType {
+  all,
+  online, // 대기중
+  printing, // 인쇄중
+  warning, // 경고
+  offline, // 오프라인
+}
 
-  // 색상
-  static const Color primaryBlue = Color(0xFF1A66EB);
+/// UI 상수 (Windows UI 스타일)
+class _PrinterStatusUIConstants {
+  static const double horizontalPadding = 16.0;
+  static const double cardSpacing = 16.0;
+  static const double cardBorderRadius = 2.0; // Windows 스타일: 약간 둥근 모서리
+  static const double buttonHeight = 32.0;
+  static const double buttonBorderRadius = 2.0;
+
+  // 폰트 패밀리
+  static const String fontFamily = 'Pretendard';
+
+  // 텍스트 스타일 헬퍼 메서드
+  static TextStyle textStyle({double? fontSize, FontWeight? fontWeight, Color? color, String? fontFamily}) {
+    return TextStyle(
+      fontSize: fontSize,
+      fontWeight: fontWeight,
+      color: color,
+      fontFamily: fontFamily ?? _PrinterStatusUIConstants.fontFamily,
+    );
+  }
+
+  // Windows 색상
+  static const Color windowTitleBarStart = Color(0xFF0078D4);
+  static const Color windowTitleBarEnd = Color(0xFF005A9E);
+  static const Color toolbarBg = Color(0xFFE8E8E8);
+  static const Color borderColor = Color(0xFFADADAD);
+  static const Color cardBg = Color(0xFFFFFFFF);
+  static const Color cardHeaderStart = Color(0xFFE8E8E8);
+  static const Color cardHeaderEnd = Color(0xFFD0D0D0);
+  static const Color statusBarBg = Color(0xFFE8E8E8);
+
+  // 상태 색상
+  static const Color onlineColor = Color(0xFF4CAF50);
+  static const Color printingColor = Color(0xFF2196F3);
+  static const Color warningColor = Color(0xFFFFC107);
+  static const Color offlineColor = Color(0xFFF44336);
+
+  // 기존 호환성 색상
+  static const Color primaryBlue = Color(0xFF0078D4);
   static const Color primaryText = Color(0xFFFFFFFF);
   static const Color cardShadow = Color(0x1A000000);
-  static const Color connectedColor = Color(0xFF4CAF50);
-  static const Color disconnectedColor = Color(0xFF9E9E9E);
-  static const Color printingColor = Color(0xFFFF9800);
   static const Color errorColor = Color(0xFFF44336);
+
+  // 카드 배경색 (상태별)
+  static Color getCardBgColor(PrinterStatusType status) {
+    switch (status) {
+      case PrinterStatusType.online:
+        return Color(0xFFF1F8F4); // 연한 녹색
+      case PrinterStatusType.printing:
+        return Color(0xFFE3F2FD); // 연한 파란색
+      case PrinterStatusType.warning:
+        return Color(0xFFFFF8E1); // 연한 노란색
+      case PrinterStatusType.offline:
+        return Color(0xFFFFEBEE); // 연한 빨간색
+      default:
+        return cardBg;
+    }
+  }
 }
 
 class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
+  PrinterStatusType _selectedFilter = PrinterStatusType.all;
+
   @override
   void initState() {
     super.initState();
@@ -79,66 +131,357 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
   @override
   Widget build(BuildContext context) {
     final printers = ref.watch(printerListProvider);
+    final filteredPrinters = _getFilteredPrinters(printers);
 
     return Scaffold(
-      backgroundColor: Color(0xFFF5F5F5),
-      body: Column(children: [_buildHeader(), Expanded(child: _buildPrinterGrid(printers))]),
-    );
-  }
-
-  /// 헤더 빌드
-  Widget _buildHeader() {
-    return Container(
-      height: _PrinterStatusUIConstants.headerHeight,
-      padding: EdgeInsets.symmetric(horizontal: _PrinterStatusUIConstants.horizontalPadding),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [BoxShadow(color: _PrinterStatusUIConstants.cardShadow, blurRadius: 4, offset: Offset(0, 2))],
-      ),
-      child: Row(
+      backgroundColor: Color(0xFFF0F0F0), // Windows 배경색
+      body: Column(
         children: [
-          Text('프린터 관리', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF1A1A1A))),
-          Spacer(),
-          _buildExampleDataButton(),
-          SizedBox(width: 12),
-          _buildAddButton(),
+          // _buildWindowTitleBar(),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  _buildToolbar(printers),
+                  _buildStatusBar(printers),
+                  _buildPrinterGrid(filteredPrinters),
+                  _buildBottomStatusBar(filteredPrinters.length),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  /// 예시 데이터 버튼
-  Widget _buildExampleDataButton() {
-    return OutlinedButton.icon(
-      onPressed: _addExamplePrinters,
-      icon: Icon(Icons.auto_awesome, size: 18),
-      label: Text('예시 데이터'),
-      style: OutlinedButton.styleFrom(
-        foregroundColor: _PrinterStatusUIConstants.primaryBlue,
-        side: BorderSide(color: _PrinterStatusUIConstants.primaryBlue),
-        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.buttonBorderRadius),
+  /// Window Title Bar (Windows 스타일)
+  Widget _buildWindowTitleBar() {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [_PrinterStatusUIConstants.windowTitleBarStart, _PrinterStatusUIConstants.windowTitleBarEnd],
+          begin: Alignment.topLeft,
+          end: Alignment.topRight,
         ),
+        boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2))],
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.print, size: 20, color: Colors.white),
+          SizedBox(width: 8),
+          Text(
+            '프린터 상태 모니터 시스템',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: Colors.white,
+              fontFamily: _PrinterStatusUIConstants.fontFamily,
+            ),
+          ),
+          Spacer(),
+          IconButton(
+            icon: Icon(Icons.settings, size: 16, color: Colors.white),
+            onPressed: () {},
+            padding: EdgeInsets.all(4),
+            constraints: BoxConstraints(),
+            style: IconButton.styleFrom(backgroundColor: Colors.transparent, shape: RoundedRectangleBorder()),
+          ),
+          SizedBox(width: 4),
+          IconButton(
+            icon: Icon(Icons.power_settings_new, size: 16, color: Colors.white),
+            onPressed: () {},
+            padding: EdgeInsets.all(4),
+            constraints: BoxConstraints(),
+            style: IconButton.styleFrom(backgroundColor: Colors.transparent, shape: RoundedRectangleBorder()),
+          ),
+        ],
       ),
     );
   }
 
-  /// 프린터 추가 버튼
-  Widget _buildAddButton() {
-    return ElevatedButton.icon(
-      onPressed: () => _showAddPrinterDialog(context, ref),
-      icon: Icon(Icons.add, size: 20),
-      label: Text('프린터 추가'),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: _PrinterStatusUIConstants.primaryBlue,
-        foregroundColor: _PrinterStatusUIConstants.primaryText,
-        padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+  /// Toolbar (Windows 스타일)
+  Widget _buildToolbar(List<ManagedPrinter> printers) {
+    final counts = _getStatusCounts(printers);
+
+    return Container(
+      margin: EdgeInsets.all(16),
+      padding: EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _PrinterStatusUIConstants.toolbarBg,
+        border: Border.all(color: _PrinterStatusUIConstants.borderColor),
+        borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.cardBorderRadius),
+        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 2, offset: Offset(0, 1))],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _buildFilterButton('전체', PrinterStatusType.all, counts['all']!),
+                _buildFilterButton('대기중', PrinterStatusType.online, counts['online']!),
+                _buildFilterButton('인쇄중', PrinterStatusType.printing, counts['printing']!),
+                _buildFilterButton('경고', PrinterStatusType.warning, counts['warning']!),
+                _buildFilterButton('오프라인', PrinterStatusType.offline, counts['offline']!),
+              ],
+            ),
+          ),
+          SizedBox(width: 12),
+          OutlinedButton.icon(
+            onPressed: _addExamplePrinters,
+            icon: Icon(Icons.auto_awesome, size: 16),
+            label: Text('예시 데이터'),
+            style: OutlinedButton.styleFrom(
+              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.buttonBorderRadius),
+              ),
+            ),
+          ),
+          SizedBox(width: 8),
+          OutlinedButton.icon(
+            onPressed: () => _showAddPrinterDialog(context, ref),
+            icon: Icon(Icons.add, size: 16),
+            label: Text('프린터 추가'),
+            style: OutlinedButton.styleFrom(
+              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.buttonBorderRadius),
+              ),
+            ),
+          ),
+          SizedBox(width: 8),
+          OutlinedButton.icon(
+            onPressed: () => _refreshPrinterList(),
+            icon: Icon(Icons.refresh, size: 16),
+            label: Text('새로고침'),
+            style: OutlinedButton.styleFrom(
+              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.buttonBorderRadius),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 필터 버튼
+  Widget _buildFilterButton(String label, PrinterStatusType type, int count) {
+    final isSelected = _selectedFilter == type;
+    return OutlinedButton(
+      onPressed: () => setState(() => _selectedFilter = type),
+      style: OutlinedButton.styleFrom(
+        backgroundColor: isSelected ? Colors.blue : Colors.transparent,
+        foregroundColor: isSelected ? Colors.white : Colors.black87,
+        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        side: BorderSide(color: isSelected ? Colors.blue : _PrinterStatusUIConstants.borderColor, width: 1),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.buttonBorderRadius),
         ),
       ),
+      child: Text('$label ($count)', style: _PrinterStatusUIConstants.textStyle()),
     );
+  }
+
+  /// Status Bar (Windows 스타일)
+  Widget _buildStatusBar(List<ManagedPrinter> printers) {
+    final counts = _getStatusCounts(printers);
+
+    return Container(
+      margin: EdgeInsets.fromLTRB(16, 0, 16, 16),
+      decoration: BoxDecoration(
+        color: _PrinterStatusUIConstants.cardBg,
+        border: Border.all(color: _PrinterStatusUIConstants.borderColor),
+        borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.cardBorderRadius),
+        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 2, offset: Offset(0, 1))],
+      ),
+      child: Row(
+        children: [
+          Expanded(child: _buildStatusBarItem('전체', counts['all']!, Colors.grey[800]!)),
+          Container(width: 1, height: 40, color: Colors.grey[300]),
+          Expanded(child: _buildStatusBarItem('대기중', counts['online']!, _PrinterStatusUIConstants.onlineColor)),
+          Container(width: 1, height: 40, color: Colors.grey[300]),
+          Expanded(child: _buildStatusBarItem('인쇄중', counts['printing']!, _PrinterStatusUIConstants.printingColor)),
+          Container(width: 1, height: 40, color: Colors.grey[300]),
+          Expanded(child: _buildStatusBarItem('경고', counts['warning']!, _PrinterStatusUIConstants.warningColor)),
+          Container(width: 1, height: 40, color: Colors.grey[300]),
+          Expanded(child: _buildStatusBarItem('오프라인', counts['offline']!, _PrinterStatusUIConstants.offlineColor)),
+        ],
+      ),
+    );
+  }
+
+  /// Status Bar Item
+  Widget _buildStatusBarItem(String label, int count, Color color) {
+    return Padding(
+      padding: EdgeInsets.all(12),
+      child: Column(
+        children: [
+          Text(
+            label,
+            style: TextStyle(fontSize: 12, color: Colors.grey[600], fontFamily: _PrinterStatusUIConstants.fontFamily),
+          ),
+          SizedBox(height: 4),
+          Text(
+            '$count',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: color,
+              fontFamily: _PrinterStatusUIConstants.fontFamily,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Bottom Status Bar
+  Widget _buildBottomStatusBar(int printerCount) {
+    return Container(
+      margin: EdgeInsets.all(16),
+      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: _PrinterStatusUIConstants.statusBarBg,
+        border: Border.all(color: _PrinterStatusUIConstants.borderColor),
+        borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.cardBorderRadius),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            '총 $printerCount개의 프린터',
+            style: TextStyle(fontSize: 12, color: Colors.grey[700], fontFamily: _PrinterStatusUIConstants.fontFamily),
+          ),
+          Text(
+            '마지막 업데이트: ${DateTime.now().toString().substring(11, 19)}',
+            style: TextStyle(fontSize: 12, color: Colors.grey[700], fontFamily: _PrinterStatusUIConstants.fontFamily),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 상태 개요 카드들 (React 프로젝트 스타일)
+  @Deprecated('Use _buildStatusBar instead')
+  Widget _buildStatusOverview(List<ManagedPrinter> printers) {
+    final counts = _getStatusCounts(printers);
+
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: _PrinterStatusUIConstants.horizontalPadding, vertical: 16),
+      child: Row(
+        children: [
+          Expanded(child: _buildStatusCard('전체', counts['all']!, Colors.grey[700]!, Icons.timeline)),
+          SizedBox(width: 12),
+          Expanded(child: _buildStatusCard('대기중', counts['online']!, Color(0xFF4CAF50), null)),
+          SizedBox(width: 12),
+          Expanded(child: _buildStatusCard('인쇄중', counts['printing']!, Color(0xFF2196F3), null)),
+          SizedBox(width: 12),
+          Expanded(child: _buildStatusCard('경고', counts['warning']!, Color(0xFFFFC107), null)),
+          SizedBox(width: 12),
+          Expanded(child: _buildStatusCard('오프라인', counts['offline']!, Color(0xFFF44336), null)),
+        ],
+      ),
+    );
+  }
+
+  /// 상태 카드
+  Widget _buildStatusCard(String label, int count, Color color, IconData? icon) {
+    return Container(
+      padding: EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              if (icon != null)
+                Icon(icon, size: 16, color: Colors.grey[600])
+              else
+                Container(width: 12, height: 12, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+              SizedBox(width: 8),
+              Text(label, style: _PrinterStatusUIConstants.textStyle(fontSize: 14, color: Colors.grey[600])),
+            ],
+          ),
+          SizedBox(height: 8),
+          Text(
+            '$count',
+            style: _PrinterStatusUIConstants.textStyle(fontSize: 24, fontWeight: FontWeight.bold, color: color),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 상태별 카운트 계산
+  Map<String, int> _getStatusCounts(List<ManagedPrinter> printers) {
+    int online = 0;
+    int printing = 0;
+    int warning = 0;
+    int offline = 0;
+
+    for (final printer in printers) {
+      final status = _getPrinterStatusType(printer);
+      switch (status) {
+        case PrinterStatusType.online:
+          online++;
+          break;
+        case PrinterStatusType.printing:
+          printing++;
+          break;
+        case PrinterStatusType.warning:
+          warning++;
+          break;
+        case PrinterStatusType.offline:
+          offline++;
+          break;
+        default:
+          break;
+      }
+    }
+
+    return {'all': printers.length, 'online': online, 'printing': printing, 'warning': warning, 'offline': offline};
+  }
+
+  /// 프린터 상태 타입 결정
+  PrinterStatusType _getPrinterStatusType(ManagedPrinter printer) {
+    // 오프라인: 연결되지 않음
+    if (printer.connectionStatus != '연결됨') {
+      return PrinterStatusType.offline;
+    }
+
+    // 인쇄중: printStatus에 '인쇄 중' 포함
+    if (printer.printStatus.contains('인쇄 중')) {
+      return PrinterStatusType.printing;
+    }
+
+    // 경고: 연결되었지만 이상 상태
+    if (printer.printStatus != '인쇄 대기' && printer.printStatus != '인쇄 완료') {
+      return PrinterStatusType.warning;
+    }
+
+    // 대기중: 연결되었고 대기 상태
+    return PrinterStatusType.online;
+  }
+
+  /// 필터링된 프린터 목록
+  List<ManagedPrinter> _getFilteredPrinters(List<ManagedPrinter> printers) {
+    if (_selectedFilter == PrinterStatusType.all) {
+      return printers;
+    }
+
+    return printers.where((printer) {
+      return _getPrinterStatusType(printer) == _selectedFilter;
+    }).toList();
   }
 
   /// 예시 프린터 데이터 추가
@@ -284,17 +627,17 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.print_disabled, size: 64, color: Colors.grey[400]),
+            Icon(Icons.print, size: 64, color: Colors.grey[300]),
             SizedBox(height: 16),
-            Text('등록된 프린터가 없습니다', style: TextStyle(fontSize: 16, color: Colors.grey[600])),
-            SizedBox(height: 8),
-            Text('프린터 추가 버튼을 눌러 프린터를 등록하세요', style: TextStyle(fontSize: 14, color: Colors.grey[500])),
+            Text('해당 상태의 프린터가 없습니다', style: _PrinterStatusUIConstants.textStyle(fontSize: 16, color: Colors.grey[500])),
           ],
         ),
       );
     }
 
     return GridView.builder(
+      shrinkWrap: true, // SingleChildScrollView 안에서 사용하기 위해 필요
+      physics: NeverScrollableScrollPhysics(), // 부모의 스크롤을 사용
       padding: EdgeInsets.all(_PrinterStatusUIConstants.cardSpacing),
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: _getCrossAxisCount(context),
@@ -317,65 +660,163 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     return 1;
   }
 
-  /// 프린터 카드 빌드
+  /// 프린터 카드 빌드 (Windows UI 스타일)
   Widget _buildPrinterCard(ManagedPrinter printer) {
     // ListenableBuilder로 감싸서 상태 변경 시 자동 UI 업데이트
     return ListenableBuilder(
       listenable: printer,
       builder: (context, child) {
-        final isConnected = printer.connectionStatus == '연결됨';
-        final isPrinting = printer.printStatus == '인쇄 중';
+        final statusType = _getPrinterStatusType(printer);
         final hasOrder = printer.totalPrintWork != null && printer.totalPrintWork! > 0;
 
-        return Card(
-          elevation: 2,
-          shape: RoundedRectangleBorder(
+        return Container(
+          margin: EdgeInsets.only(bottom: 16),
+          decoration: BoxDecoration(
+            color: _PrinterStatusUIConstants.cardBg, // 상태별 배경색
+            border: Border.all(color: _PrinterStatusUIConstants.borderColor, width: 2),
             borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.cardBorderRadius),
+            boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2))],
           ),
-          child: Container(
-            padding: EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 헤더: 프린터명 + 상태 배지
-                _buildCardHeader(printer, isConnected, isPrinting),
-                SizedBox(height: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 카드 헤더 (Windows 스타일 그라데이션)
+              _buildCardHeader(printer, statusType),
 
-                // 기본 정보
-                _buildBasicInfo(printer),
-                SizedBox(height: 16),
+              // 카드 본문
+              Expanded(
+                child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // 기본 정보
+                      _buildBasicInfo(printer),
+                      SizedBox(height: 12),
 
-                // 통계 정보
-                _buildStatistics(printer),
-                Spacer(),
+                      // 품목명
+                      _buildItemName(printer),
+                      SizedBox(height: 12),
 
-                // 액션 버튼들
-                _buildActionButtons(printer, hasOrder, isConnected),
-              ],
-            ),
+                      // 통계 정보
+                      _buildStatistics(printer),
+
+                      // Spacer로 액션 버튼을 바닥에 붙이기
+                      Spacer(),
+
+                      // 액션 버튼들 (같은 행에 배치)
+                      _buildActionButtons(printer, hasOrder),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
         );
       },
     );
   }
 
-  /// 카드 헤더 (프린터명 + 상태 + 제거)
-  Widget _buildCardHeader(ManagedPrinter printer, bool isConnected, bool isPrinting) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            printer.name,
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1A1A1A)),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
+  /// 카드 헤더 (Windows 스타일 그라데이션)
+  Widget _buildCardHeader(ManagedPrinter printer, PrinterStatusType statusType) {
+    return Container(
+      padding: EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [_PrinterStatusUIConstants.cardHeaderStart, _PrinterStatusUIConstants.cardHeaderEnd],
+          begin: Alignment.topLeft,
+          end: Alignment.topRight,
         ),
-        // SizedBox(width: 8),
-        // _buildStatusBadge(printer.connectStatus, isConnected),
-        SizedBox(width: 8),
-        _buildRemoveBadge(printer),
-      ],
+        border: Border(bottom: BorderSide(color: _PrinterStatusUIConstants.borderColor, width: 2)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.print, size: 24, color: Colors.grey[700]),
+          SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  printer.name,
+                  style: _PrinterStatusUIConstants.textStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[900],
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                SizedBox(height: 2),
+                Text(
+                  'VJ 6330', // 모델명
+                  style: _PrinterStatusUIConstants.textStyle(fontSize: 12, color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(width: 8),
+          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [_buildStatusBadge(statusType)]),
+          SizedBox(width: 8),
+          _buildRemoveBadge(printer),
+        ],
+      ),
+    );
+  }
+
+  /// 상태 아이콘
+  Widget _buildStatusIcon(PrinterStatusType statusType) {
+    switch (statusType) {
+      case PrinterStatusType.online:
+        return Icon(Icons.check_circle, size: 20, color: Color(0xFF4CAF50));
+      case PrinterStatusType.offline:
+        return Icon(Icons.error, size: 20, color: Color(0xFFF44336));
+      case PrinterStatusType.printing:
+        return Icon(Icons.access_time, size: 20, color: Color(0xFF2196F3));
+      case PrinterStatusType.warning:
+        return Icon(Icons.warning, size: 20, color: Color(0xFFFFC107));
+      default:
+        return Icon(Icons.help_outline, size: 20, color: Colors.grey);
+    }
+  }
+
+  /// 상태 배지 (Windows 스타일)
+  Widget _buildStatusBadge(PrinterStatusType statusType) {
+    String label;
+    Color color;
+
+    switch (statusType) {
+      case PrinterStatusType.online:
+        label = '대기중';
+        color = _PrinterStatusUIConstants.onlineColor;
+        break;
+      case PrinterStatusType.offline:
+        label = '오프라인';
+        color = _PrinterStatusUIConstants.offlineColor;
+        break;
+      case PrinterStatusType.printing:
+        label = '인쇄중';
+        color = _PrinterStatusUIConstants.printingColor;
+        break;
+      case PrinterStatusType.warning:
+        label = '경고';
+        color = _PrinterStatusUIConstants.warningColor;
+        break;
+      default:
+        label = '알 수 없음';
+        color = Colors.grey;
+    }
+
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.cardBorderRadius),
+      ),
+      child: Text(
+        label,
+        style: _PrinterStatusUIConstants.textStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.white),
+      ),
     );
   }
 
@@ -402,31 +843,77 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
 
   /// 기본 정보 섹션
   Widget _buildBasicInfo(ManagedPrinter printer) {
-    final isPrinterOn = printer.isPrinterOn;
-    String printerStateText;
-    if (printer.connectionStatus != '연결됨') {
-      printerStateText = '미연결';
-    } else if (isPrinterOn == true) {
-      printerStateText = '작동 중 (ON)';
-    } else if (isPrinterOn == false) {
-      printerStateText = '준비 상태 (OFF)';
-    } else {
-      printerStateText = '상태 확인 중';
-    }
+    return Container(
+      padding: EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[200]!, width: 1))),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('IP 주소', style: _PrinterStatusUIConstants.textStyle(fontSize: 11, color: Colors.grey[600])),
+                SizedBox(height: 2),
+                Text(
+                  printer.ip,
+                  style: _PrinterStatusUIConstants.textStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[900],
+                    fontFamily: 'monospace', // IP 주소는 monospace 유지
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('위치', style: _PrinterStatusUIConstants.textStyle(fontSize: 11, color: Colors.grey[600])),
+                SizedBox(height: 2),
+                Text(
+                  '1층 - 영업부', // 실제 위치 정보가 있다면 사용
+                  style: _PrinterStatusUIConstants.textStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[900],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildInfoRow(Icons.computer, 'IP 주소', '${printer.ip}:${printer.port}'),
-        SizedBox(height: 8),
-        _buildInfoRow(Icons.inventory_2, '품목명', printer.item ?? '-'),
-        SizedBox(height: 8),
-        _buildInfoRow(Icons.info, '프린터 상태', printerStateText),
-      ],
+  /// 품목명 섹션
+  Widget _buildItemName(ManagedPrinter printer) {
+    return Container(
+      padding: EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[200]!, width: 1))),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('품목명', style: _PrinterStatusUIConstants.textStyle(fontSize: 11, color: Colors.grey[600])),
+          SizedBox(height: 2),
+          Text(
+            printer.item ?? '-',
+            style: _PrinterStatusUIConstants.textStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey[900],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   /// 정보 행
+  @Deprecated('Not used in Windows UI style')
   Widget _buildInfoRow(IconData icon, String label, String value) {
     return Row(
       children: [
@@ -447,7 +934,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     );
   }
 
-  /// 통계 정보 섹션
+  /// 통계 정보 섹션 (Windows 스타일)
   Widget _buildStatistics(ManagedPrinter printer) {
     final totalOrder = printer.totalPrintWork ?? 0;
     final completed = printer.completePrintWork ?? 0;
@@ -457,35 +944,83 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     return Container(
       padding: EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Color(0xFFF8F9FA),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Color(0xFFE0E0E0)),
+        color: Colors.grey[50],
+        border: Border.all(color: Colors.grey[200]!),
+        borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.cardBorderRadius),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('인쇄 현황', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey[700])),
+          Text(
+            '인쇄 현황',
+            style: _PrinterStatusUIConstants.textStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey[700],
+            ),
+          ),
           SizedBox(height: 12),
-          _buildStatRow('총 발주 수량', '$totalOrder', Colors.grey[800]!),
-          SizedBox(height: 8),
-          _buildStatRow('완료 수량', '$completed', Color(0xFF4CAF50)),
-          if (printer.protocol == PrinterProtocol.zipher) ...[
-            SizedBox(height: 8),
-            _buildStatRow('실시간 카운트', '$currentCount', _PrinterStatusUIConstants.primaryBlue),
-          ],
+          // 3열 그리드
+          Row(
+            children: [
+              Expanded(child: _buildStatBox('총 발주 수량', '$totalOrder', Colors.grey[900]!)),
+              SizedBox(width: 8),
+              Expanded(child: _buildStatBox('완료 수량', '$completed', _PrinterStatusUIConstants.printingColor)),
+              if (printer.protocol == PrinterProtocol.zipher) ...[
+                SizedBox(width: 8),
+                Expanded(child: _buildStatBox('실시간 카운트', '$currentCount', _PrinterStatusUIConstants.onlineColor)),
+              ],
+            ],
+          ),
           if (totalOrder > 0) ...[SizedBox(height: 12), _buildProgressBar(progress)],
         ],
       ),
     );
   }
 
-  /// 통계 행
-  Widget _buildStatRow(String label, String value, Color valueColor) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  /// 통계 박스 (Windows 스타일)
+  Widget _buildStatBox(String label, String value, Color valueColor) {
+    return Container(
+      padding: EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: Colors.grey[300]!),
+        borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.cardBorderRadius),
+      ),
+      child: Column(
+        children: [
+          Text(
+            label,
+            style: _PrinterStatusUIConstants.textStyle(fontSize: 11, color: Colors.grey[600]),
+            textAlign: TextAlign.center,
+          ),
+          SizedBox(height: 4),
+          Text(
+            '${value}장',
+            style: _PrinterStatusUIConstants.textStyle(fontSize: 16, fontWeight: FontWeight.bold, color: valueColor),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 통계 컬럼 (React 프로젝트 스타일)
+  @Deprecated('Use _buildStatBox instead')
+  Widget _buildStatColumn(String label, String value, Color valueColor) {
+    return Column(
       children: [
-        Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-        Text('$value장', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: valueColor)),
+        Text(
+          label,
+          style: _PrinterStatusUIConstants.textStyle(fontSize: 12, color: Colors.grey[600]),
+          textAlign: TextAlign.center,
+        ),
+        SizedBox(height: 4),
+        Text(
+          '${value}장',
+          style: _PrinterStatusUIConstants.textStyle(fontSize: 18, fontWeight: FontWeight.bold, color: valueColor),
+          textAlign: TextAlign.center,
+        ),
       ],
     );
   }
@@ -498,10 +1033,14 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('진행률', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+            Text('진행률', style: _PrinterStatusUIConstants.textStyle(fontSize: 11, color: Colors.grey[600])),
             Text(
               '${(progress * 100).toStringAsFixed(1)}%',
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey[700]),
+              style: _PrinterStatusUIConstants.textStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[700],
+              ),
             ),
           ],
         ),
@@ -519,77 +1058,82 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     );
   }
 
-  /// 액션 버튼들
-  Widget _buildActionButtons(ManagedPrinter printer, bool hasOrder, bool isConnected) {
+  /// 액션 버튼들 (Windows 스타일 - 같은 행에 배치)
+  Widget _buildActionButtons(ManagedPrinter printer, bool hasOrder) {
+    final isConnected = printer.connectionStatus == '연결됨';
     final isPrinterOn = printer.isPrinterOn;
 
-    return Column(
+    return Row(
       children: [
         // 발주/출고 버튼
-        if (hasOrder)
-          _buildActionButton(
-            label: '출고하기',
-            icon: Icons.local_shipping,
-            color: Color(0xFF4CAF50),
-            onPressed: () => _handleShipment(printer),
-          )
-        else
-          _buildActionButton(
-            label: '발주하기',
-            icon: Icons.add_shopping_cart,
-            color: _PrinterStatusUIConstants.primaryBlue,
-            onPressed: () => _handleOrder(printer),
-          ),
-        SizedBox(height: 8),
+        Expanded(
+          child:
+              hasOrder
+                  ? _buildActionButton(
+                    label: '출고하기',
+                    icon: Icons.local_shipping,
+                    color: _PrinterStatusUIConstants.onlineColor,
+                    onPressed: () => _handleShipment(printer),
+                  )
+                  : _buildActionButton(
+                    label: '발주선택',
+                    icon: Icons.add_shopping_cart,
+                    color: Colors.blue,
+                    onPressed: () => _handleOrder(printer),
+                  ),
+        ),
+        SizedBox(width: 8),
 
-        // 하단 버튼 (On/Off)
-        if (isConnected)
-          _buildIconButton(
-            icon: isPrinterOn == true ? Icons.pause : Icons.play_arrow,
-            label: isPrinterOn == true ? '중지' : (isPrinterOn == false ? '시작' : '상태 확인 중'),
-            color:
-                isPrinterOn == true
-                    ? _PrinterStatusUIConstants.printingColor
-                    : _PrinterStatusUIConstants.connectedColor,
-            onPressed: () => _handleTogglePrinter(printer, isConnected),
-          )
-        else
-          _buildIconButton(
-            icon: Icons.play_arrow,
-            label: '연결 필요',
-            color: _PrinterStatusUIConstants.disconnectedColor,
-            onPressed: null,
-          ),
+        // 준비/정지 버튼
+        Expanded(
+          child:
+              isConnected
+                  ? (isPrinterOn == true
+                      ? _buildActionButton(
+                        label: '정지',
+                        icon: Icons.pause,
+                        color: _PrinterStatusUIConstants.offlineColor,
+                        onPressed: () => _handleTogglePrinter(printer, isConnected),
+                      )
+                      : _buildActionButton(
+                        label: '준비',
+                        icon: Icons.play_arrow,
+                        color: _PrinterStatusUIConstants.onlineColor,
+                        onPressed: () => _handleTogglePrinter(printer, isConnected),
+                      ))
+                  : _buildActionButton(label: '연결 필요', icon: Icons.play_arrow, color: Colors.grey, onPressed: null),
+        ),
       ],
     );
   }
 
-  /// 액션 버튼
+  /// 액션 버튼 (Windows 스타일)
   Widget _buildActionButton({
     required String label,
     required IconData icon,
     required Color color,
-    required VoidCallback onPressed,
+    VoidCallback? onPressed,
   }) {
     return SizedBox(
-      width: double.infinity,
       height: _PrinterStatusUIConstants.buttonHeight,
-      child: ElevatedButton.icon(
+      child: ElevatedButton(
         onPressed: onPressed,
-        icon: Icon(icon, size: 18),
-        label: Text(label),
         style: ElevatedButton.styleFrom(
-          backgroundColor: color,
+          backgroundColor: onPressed != null ? color : Colors.grey[400],
           foregroundColor: Colors.white,
+          padding: EdgeInsets.symmetric(horizontal: 12),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.buttonBorderRadius),
           ),
+          elevation: onPressed != null ? 1 : 0,
         ),
+        child: Text(label, style: _PrinterStatusUIConstants.textStyle(fontSize: 13, fontWeight: FontWeight.w500)),
       ),
     );
   }
 
   /// 아이콘 버튼
+  @Deprecated('Not used in Windows UI style')
   Widget _buildIconButton({
     required IconData icon,
     required String label,
@@ -601,7 +1145,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
       child: OutlinedButton.icon(
         onPressed: onPressed,
         icon: Icon(icon, size: 18),
-        label: Text(label, style: TextStyle(fontSize: 12)),
+        label: Text(label, style: _PrinterStatusUIConstants.textStyle(fontSize: 12)),
         style: OutlinedButton.styleFrom(
           foregroundColor: color,
           side: BorderSide(color: color),
@@ -658,14 +1202,20 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
       context: context,
       builder:
           (context) => AlertDialog(
-            title: Text('프린터 제거'),
-            content: Text('${printer.name} 프린터를 제거하시겠습니까?'),
+            title: Text(
+              '프린터 제거',
+              style: _PrinterStatusUIConstants.textStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            content: Text('${printer.name} 프린터를 제거하시겠습니까?', style: _PrinterStatusUIConstants.textStyle()),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(context, false), child: Text('취소')),
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text('취소', style: _PrinterStatusUIConstants.textStyle()),
+              ),
               TextButton(
                 onPressed: () => Navigator.pop(context, true),
                 style: TextButton.styleFrom(foregroundColor: _PrinterStatusUIConstants.errorColor),
-                child: Text('제거'),
+                child: Text('제거', style: _PrinterStatusUIConstants.textStyle()),
               ),
             ],
           ),
@@ -703,10 +1253,16 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
               (context, setState) => Stack(
                 children: [
                   AlertDialog(
-                    title: Text('프린터 추가하기'),
+                    title: Text(
+                      '프린터 추가하기',
+                      style: _PrinterStatusUIConstants.textStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
                     content: _buildAddPrinterForm(nameController, ipController, portController),
                     actions: [
-                      TextButton(onPressed: isLoading ? null : () => Navigator.pop(context), child: Text('취소')),
+                      TextButton(
+                        onPressed: isLoading ? null : () => Navigator.pop(context),
+                        child: Text('취소', style: _PrinterStatusUIConstants.textStyle()),
+                      ),
                       ElevatedButton(
                         onPressed:
                             isLoading
@@ -719,7 +1275,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
                                   portController,
                                   (loading) => setState(() => isLoading = loading),
                                 ),
-                        child: Text('추가하기'),
+                        child: Text('추가하기', style: _PrinterStatusUIConstants.textStyle()),
                       ),
                     ],
                   ),

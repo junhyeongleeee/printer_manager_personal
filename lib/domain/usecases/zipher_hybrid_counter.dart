@@ -247,7 +247,7 @@ class ZipherHybridCounter {
   }
 
   /// 필드 값 업데이트 (managed_printer.dart의 sendPrintJob 로직 참고)
-  /// 카운트 값을 hex로 변환하여 필드에 업데이트
+  /// 카운트 값을 hex로 변환하여 필드에 업데이트`
   Future<void> _updateFieldValue(int count) async {
     // jobName과 fieldName이 설정되어 있을 때만 필드 업데이트 수행
     if (_jobName == null || _fieldName == null) {
