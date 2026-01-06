@@ -4,7 +4,7 @@ import 'package:print_manager/core/services/logger_service.dart';
 
 /// NGPCL 하이브리드 카운터
 /// Unsolicited Data + 폴링 백업 방식
-/// 
+///
 /// 권장 방식:
 /// 1. Unsolicited Data를 우선 활용 (이벤트 기반, 실시간)
 /// 2. 폴링을 백업으로 사용 (Unsolicited Data 누락 시 대비)
@@ -15,7 +15,7 @@ class NGPCLHybridCounter {
   bool _isMonitoring = false;
   int _currentCount = 0;
   DateTime? _lastUnsolicitedTime;
-  
+
   // 콜백 함수
   Function(int count)? onCountChanged;
   Function()? onPrintStarted;
@@ -24,7 +24,7 @@ class NGPCLHybridCounter {
   NGPCLHybridCounter(this.socket);
 
   /// 하이브리드 모니터링 시작
-  /// 
+  ///
   /// [verificationInterval]: 검증 폴링 주기 (기본 2초)
   /// Unsolicited Data를 주로 사용하고, 주기적으로 Counts로 검증
   Future<void> startHybridMonitoring({
@@ -68,11 +68,11 @@ class NGPCLHybridCounter {
   /// 프린터가 자동으로 보내는 메시지 처리
   void _handleUnsolicitedData(String message) {
     _lastUnsolicitedTime = DateTime.now();
-    
+
     // Print Status 응답 확인
     if (message.contains('~PS') || message.contains('PRINTING') || message.contains('COMPLETE')) {
       logger.i('Unsolicited Print Status: $message');
-      
+
       // 인쇄 시작/완료 감지
       if (message.contains('PRINTING') || message.contains('PRODUCING')) {
         onPrintStarted?.call();
@@ -82,7 +82,7 @@ class NGPCLHybridCounter {
         _verifyCount();
       }
     }
-    
+
     // Counts 응답 확인
     if (message.contains('~CR') || message.contains('TOTAL') || message.contains('BATCH')) {
       logger.i('Unsolicited Counts: $message');
@@ -98,13 +98,12 @@ class NGPCLHybridCounter {
     try {
       final response = await socket.getCounts();
       final newCount = _parseCountFromResponse(response);
-      
+
       if (newCount != null) {
         // Unsolicited Data가 오래 안 왔으면 강제 업데이트
-        final timeSinceLastUnsolicited = _lastUnsolicitedTime != null
-            ? DateTime.now().difference(_lastUnsolicitedTime!)
-            : const Duration(hours: 1);
-        
+        final timeSinceLastUnsolicited =
+            _lastUnsolicitedTime != null ? DateTime.now().difference(_lastUnsolicitedTime!) : const Duration(hours: 1);
+
         if (newCount != _currentCount) {
           if (timeSinceLastUnsolicited > const Duration(seconds: 5)) {
             // Unsolicited Data가 5초 이상 없으면 폴링 결과로 업데이트
@@ -112,10 +111,10 @@ class NGPCLHybridCounter {
             _updateCount(newCount);
           } else {
             // Unsolicited Data가 최근에 있었으면 검증만
-            logger.d('카운트 검증: $newCount (현재: $_currentCount)');
+            // logger.d('카운트 검증: $newCount (현재: $_currentCount)');
           }
         }
-        
+
         // 검증 완료
       }
     } catch (e) {
@@ -127,13 +126,13 @@ class NGPCLHybridCounter {
   void _updateCount(int newCount) {
     if (newCount > _currentCount) {
       final printCount = newCount - _currentCount;
-      logger.i('인쇄 감지: $printCount장 인쇄됨 (총: $newCount장)');
-      
+      // logger.i('인쇄 감지: $printCount장 인쇄됨 (총: $newCount장)');
+
       _currentCount = newCount;
       onCountChanged?.call(_currentCount);
     } else if (newCount < _currentCount) {
       // 카운트가 감소한 경우 (리셋 등)
-      logger.w('카운트 감소 감지: $_currentCount -> $newCount');
+      // logger.w('카운트 감소 감지: $_currentCount -> $newCount');
       _currentCount = newCount;
       onCountChanged?.call(_currentCount);
     }
@@ -147,13 +146,13 @@ class NGPCLHybridCounter {
       if (batchMatch != null) {
         return int.tryParse(batchMatch.group(1) ?? '');
       }
-      
+
       // BATCH가 없으면 TOTAL 사용
       final totalMatch = RegExp(r'TOTAL\|(\d+)').firstMatch(response);
       if (totalMatch != null) {
         return int.tryParse(totalMatch.group(1) ?? '');
       }
-      
+
       return null;
     } catch (e) {
       logger.e('카운트 파싱 실패: $e');
@@ -180,4 +179,3 @@ class NGPCLHybridCounter {
     stopMonitoring();
   }
 }
-

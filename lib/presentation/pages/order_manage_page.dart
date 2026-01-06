@@ -438,7 +438,7 @@ class _OrderManagePageState extends ConsumerState<OrderManagePage> {
   ) async {
     // 1. 발주 상태 업데이트
     ref.read(orderListProvider.notifier).allocateOrder(index, input);
-    selectedPrinter.item = ref.read(orderListProvider.notifier).getItemNameByOrderId(orderId);
+    selectedPrinter.updateFields(item: ref.read(orderListProvider.notifier).getItemNameByOrderId(orderId));
 
     // 2. 프린터 작업 생성
     final request = PrinterjobRequest(

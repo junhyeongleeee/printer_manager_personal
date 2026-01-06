@@ -66,12 +66,13 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
   }
 
   /// 카운트 업데이트 콜백 설정
+  /// ChangeNotifier를 사용하므로 콜백은 선택적 (하위 호환성 유지)
   void _setupCountUpdateCallback(ManagedPrinter printer) {
+    // ChangeNotifier의 notifyListeners()가 자동으로 UI를 업데이트하므로
+    // 콜백은 필요 없지만, 기존 코드와의 호환성을 위해 유지
     printer.onCountUpdate = (updatedPrinter) {
-      if (mounted) {
-        ref.read(printerListProvider.notifier).refreshState();
-        setState(() {});
-      }
+      // ListenableBuilder가 자동으로 처리하므로 여기서는 아무것도 하지 않아도 됨
+      // 하지만 필요시 추가 로직을 넣을 수 있음
     };
   }
 
@@ -252,11 +253,13 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
       );
 
       // 상태 설정 (실제 연결은 하지 않고 상태만 설정)
-      printer.connectStatus = example['connectStatus'] as String;
-      printer.item = example['item'] as String;
-      printer.printStatus = example['printStatus'] as String;
-      printer.totalPrintWork = example['totalPrintWork'] as int?;
-      printer.completePrintWork = example['completePrintWork'] as int?;
+      printer.updateFields(
+        connectionStatus: example['connectStatus'] as String, // connectionStatus로 명확하게 구분
+        item: example['item'] as String,
+        printStatus: example['printStatus'] as String,
+        totalPrintWork: example['totalPrintWork'] as int?,
+        completePrintWork: example['completePrintWork'] as int?,
+      );
 
       // 예시 데이터이므로 실제 연결은 하지 않음
       // currentPrintCount는 카운터가 시작될 때 자동으로 설정됨
@@ -297,7 +300,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
         crossAxisCount: _getCrossAxisCount(context),
         crossAxisSpacing: _PrinterStatusUIConstants.cardSpacing,
         mainAxisSpacing: _PrinterStatusUIConstants.cardSpacing,
-        childAspectRatio: 0.72, // 카드 비율 조정 (약간 더 세로로)
+        childAspectRatio: 0.9, // 카드 비율 조정 (약간 더 세로로)
       ),
       itemCount: printers.length,
       itemBuilder: (context, index) => _buildPrinterCard(printers[index]),
@@ -316,35 +319,43 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
 
   /// 프린터 카드 빌드
   Widget _buildPrinterCard(ManagedPrinter printer) {
-    final isConnected = printer.connectStatus == '연결됨';
-    final isPrinting = printer.printStatus == '인쇄 중';
-    final hasOrder = printer.totalPrintWork != null && printer.totalPrintWork! > 0;
+    // ListenableBuilder로 감싸서 상태 변경 시 자동 UI 업데이트
+    return ListenableBuilder(
+      listenable: printer,
+      builder: (context, child) {
+        final isConnected = printer.connectionStatus == '연결됨';
+        final isPrinting = printer.printStatus == '인쇄 중';
+        final hasOrder = printer.totalPrintWork != null && printer.totalPrintWork! > 0;
 
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.cardBorderRadius)),
-      child: Container(
-        padding: EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // 헤더: 프린터명 + 상태 배지
-            _buildCardHeader(printer, isConnected, isPrinting),
-            SizedBox(height: 16),
+        return Card(
+          elevation: 2,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.cardBorderRadius),
+          ),
+          child: Container(
+            padding: EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 헤더: 프린터명 + 상태 배지
+                _buildCardHeader(printer, isConnected, isPrinting),
+                SizedBox(height: 16),
 
-            // 기본 정보
-            _buildBasicInfo(printer),
-            SizedBox(height: 16),
+                // 기본 정보
+                _buildBasicInfo(printer),
+                SizedBox(height: 16),
 
-            // 통계 정보
-            _buildStatistics(printer),
-            Spacer(),
+                // 통계 정보
+                _buildStatistics(printer),
+                Spacer(),
 
-            // 액션 버튼들
-            _buildActionButtons(printer, hasOrder, isConnected),
-          ],
-        ),
-      ),
+                // 액션 버튼들
+                _buildActionButtons(printer, hasOrder, isConnected),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -365,29 +376,6 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
         SizedBox(width: 8),
         _buildRemoveBadge(printer),
       ],
-    );
-  }
-
-  /// 상태 배지
-  Widget _buildStatusBadge(String status, bool isConnected) {
-    Color backgroundColor;
-    Color textColor;
-    IconData icon;
-
-    if (isConnected) {
-      backgroundColor = _PrinterStatusUIConstants.connectedColor.withOpacity(0.1);
-      textColor = _PrinterStatusUIConstants.connectedColor;
-      icon = Icons.check_circle;
-    } else {
-      backgroundColor = _PrinterStatusUIConstants.disconnectedColor.withOpacity(0.1);
-      textColor = _PrinterStatusUIConstants.disconnectedColor;
-      icon = Icons.cancel;
-    }
-
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(color: backgroundColor, borderRadius: BorderRadius.circular(12)),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 14, color: textColor)]),
     );
   }
 
@@ -414,6 +402,18 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
 
   /// 기본 정보 섹션
   Widget _buildBasicInfo(ManagedPrinter printer) {
+    final isPrinterOn = printer.isPrinterOn;
+    String printerStateText;
+    if (printer.connectionStatus != '연결됨') {
+      printerStateText = '미연결';
+    } else if (isPrinterOn == true) {
+      printerStateText = '작동 중 (ON)';
+    } else if (isPrinterOn == false) {
+      printerStateText = '준비 상태 (OFF)';
+    } else {
+      printerStateText = '상태 확인 중';
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -421,7 +421,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
         SizedBox(height: 8),
         _buildInfoRow(Icons.inventory_2, '품목명', printer.item ?? '-'),
         SizedBox(height: 8),
-        _buildInfoRow(Icons.info, '프린터 상태', printer.printStatus ?? '알 수 없음'),
+        _buildInfoRow(Icons.info, '프린터 상태', printerStateText),
       ],
     );
   }
@@ -521,6 +521,8 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
 
   /// 액션 버튼들
   Widget _buildActionButtons(ManagedPrinter printer, bool hasOrder, bool isConnected) {
+    final isPrinterOn = printer.isPrinterOn;
+
     return Column(
       children: [
         // 발주/출고 버튼
@@ -541,12 +543,23 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
         SizedBox(height: 8),
 
         // 하단 버튼 (On/Off)
-        _buildIconButton(
-          icon: isConnected ? Icons.pause : Icons.play_arrow,
-          label: isConnected ? '정지' : '시작',
-          color: isConnected ? _PrinterStatusUIConstants.printingColor : _PrinterStatusUIConstants.connectedColor,
-          onPressed: () => _handleTogglePrinter(printer, isConnected),
-        ),
+        if (isConnected)
+          _buildIconButton(
+            icon: isPrinterOn == true ? Icons.pause : Icons.play_arrow,
+            label: isPrinterOn == true ? '중지' : (isPrinterOn == false ? '시작' : '상태 확인 중'),
+            color:
+                isPrinterOn == true
+                    ? _PrinterStatusUIConstants.printingColor
+                    : _PrinterStatusUIConstants.connectedColor,
+            onPressed: () => _handleTogglePrinter(printer, isConnected),
+          )
+        else
+          _buildIconButton(
+            icon: Icons.play_arrow,
+            label: '연결 필요',
+            color: _PrinterStatusUIConstants.disconnectedColor,
+            onPressed: null,
+          ),
       ],
     );
   }
@@ -581,7 +594,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     required IconData icon,
     required String label,
     required Color color,
-    required VoidCallback onPressed,
+    VoidCallback? onPressed,
   }) {
     return SizedBox(
       height: _PrinterStatusUIConstants.buttonHeight,
@@ -614,16 +627,24 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
 
   /// 프린터 On/Off 토글
   Future<void> _handleTogglePrinter(ManagedPrinter printer, bool isConnected) async {
+    if (!isConnected) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('프린터가 연결되지 않았습니다')));
+      return;
+    }
+
     try {
-      if (isConnected) {
-        // 프린터 정지
-        await printer.socket.setPrinterOffline();
-        printer.connectStatus = '오프라인';
+      final currentState = printer.isPrinterOn;
+
+      if (currentState == true) {
+        // 프린터 OFF로 변경
+        await printer.setPrinterState(false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${printer.name} 프린터가 중지되었습니다')));
       } else {
-        // 프린터 시작
-        await printer.socket.setPrinterRunning();
-        printer.connectStatus = '연결됨';
+        // 프린터 ON으로 변경
+        await printer.setPrinterState(true);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${printer.name} 프린터가 시작되었습니다')));
       }
+
       ref.read(printerListProvider.notifier).refreshState();
       setState(() {});
     } catch (e) {
@@ -656,7 +677,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
         if (printer.id != null) {
           await printerRepository.deletePrinter(printer.id!);
         }
-        printer.dispose();
+        await printer.stopPrintMonitoring();
         await ref.read(printerListProvider.notifier).removePrinter(printer);
         await _refreshPrinterList();
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('프린터가 제거되었습니다')));
@@ -784,6 +805,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('프린터가 추가되었습니다')));
     } else {
+      await printer.stopPrintMonitoring();
       printer.dispose();
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('연결할 수 없습니다')));

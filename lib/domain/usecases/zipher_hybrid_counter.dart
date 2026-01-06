@@ -16,6 +16,11 @@ class ZipherHybridCounter {
   int _currentCount = 0;
   String? _lastStatus;
   bool _isVerifying = false; // 검증 중인지 추적
+  int? _lastUpdatedCount; // 마지막으로 필드 값이 업데이트된 카운트
+
+  // 필드 업데이트 설정
+  String? _jobName;
+  String? _fieldName;
 
   // 콜백 함수
   Function(int count)? onCountChanged;
@@ -27,9 +32,13 @@ class ZipherHybridCounter {
   /// 폴링 모니터링 시작
   ///
   /// [verificationInterval]: 폴링 주기 (기본 2초)
+  /// [jobName]: 필드 업데이트에 사용할 Job 이름 (선택사항)
+  /// [fieldName]: 필드 업데이트에 사용할 필드 이름 (선택사항, 기본값: 'Field00')
   /// 주기적으로 GPC와 GST 명령으로 카운트와 상태를 조회
   Future<void> startHybridMonitoring({
     Duration verificationInterval = const Duration(seconds: 2),
+    String? jobName,
+    String? fieldName,
     Function(int count)? onCountChanged,
     Function()? onPrintStarted,
     Function()? onPrintCompleted,
@@ -43,8 +52,13 @@ class ZipherHybridCounter {
     this.onPrintStarted = onPrintStarted;
     this.onPrintCompleted = onPrintCompleted;
 
+    // 필드 업데이트 설정
+    _jobName = jobName;
+    _fieldName = fieldName ?? 'Field00';
+
     _isMonitoring = true;
     _currentCount = 0;
+    _lastUpdatedCount = null; // 초기화
 
     // 초기 상태 확인
     await _verifyStatus();
@@ -112,60 +126,162 @@ class ZipherHybridCounter {
       return;
     }
 
+    // 모니터링이 중지되었으면 요청하지 않음
+    if (!_isMonitoring) {
+      logger.d('모니터링이 중지되어 검증을 스킵합니다.');
+      return;
+    }
+
     // logger.i('카운트 검증 시작');
 
     _isVerifying = true;
     try {
+      // 모니터링 중지 확인 (요청 전)
+      if (!_isMonitoring) {
+        logger.d('모니터링이 중지되어 검증을 취소합니다.');
+        return;
+      }
+
       // GPC로 카운트 직접 조회
       final countsResponse = await socket.getCounts();
+
+      // 모니터링 중지 확인 (요청 후)
+      if (!_isMonitoring) {
+        logger.d('모니터링이 중지되어 검증 결과를 무시합니다.');
+        return;
+      }
+
       final counts = _parseCountsFromResponse(countsResponse);
 
-      logger.i('countsResponse: $countsResponse currentCount: $_currentCount');
+      // logger.i('countsResponse: $countsResponse currentCount: $_currentCount');
 
       if (counts != null) {
         final newCount = counts['total'] ?? counts['batch'] ?? 0;
 
-        logger.i('newCount: $newCount');
+        // logger.i('newCount: $newCount');
 
-        // 폴링 결과로 카운트 업데이트
-        if (newCount != _currentCount) {
-          _updateCount(newCount);
-        } else {
-          logger.d('카운트 검증: $newCount (변화 없음)');
+        // 모니터링 중지 확인 (카운트 업데이트 전)
+        if (!_isMonitoring) {
+          logger.d('모니터링이 중지되어 카운트 업데이트를 취소합니다.');
+          return;
         }
+
+        // 폴링 결과로 카운트 업데이트 (변경 여부와 관계없이 필드 값 업데이트)
+        if (newCount != _currentCount) {
+          await _updateCount(newCount);
+        } else {
+          // 카운트가 동일하더라도 필드 값을 업데이트 (중복 요청 방지)
+          await _updateFieldsIfNeeded(newCount);
+        }
+      }
+
+      // 모니터링 중지 확인 (상태 확인 전)
+      if (!_isMonitoring) {
+        logger.d('모니터링이 중지되어 상태 확인을 취소합니다.');
+        return;
       }
 
       // GST로 상태도 확인 (백업)
       final statusResponse = await socket.getPrinterStatus();
+
+      // 모니터링 중지 확인 (상태 처리 전)
+      if (!_isMonitoring) {
+        logger.d('모니터링이 중지되어 상태 처리를 취소합니다.');
+        return;
+      }
+
       _processStatusResponse(statusResponse);
     } catch (e) {
-      logger.e('카운트 검증 실패: $e');
+      // 모니터링이 중지된 경우의 에러는 무시
+      if (_isMonitoring) {
+        logger.e('카운트 검증 실패: $e');
+      } else {
+        logger.d('모니터링 중지로 인한 검증 취소: $e');
+      }
     } finally {
       _isVerifying = false;
     }
   }
 
   /// 카운트 업데이트
-  void _updateCount(int newCount) {
+  Future<void> _updateCount(int newCount) async {
     if (newCount > _currentCount) {
       final printCount = newCount - _currentCount;
       logger.i('인쇄 감지: $printCount장 인쇄됨 (총: $newCount장)');
 
       _currentCount = newCount;
+      _lastUpdatedCount = newCount; // 필드 값 업데이트 추적
+
+      // 필드 값 업데이트
+      await _updateFieldValue(newCount);
+
       onCountChanged?.call(_currentCount);
     } else if (newCount < _currentCount) {
       // 카운트가 감소한 경우 (리셋 등)
       logger.w('카운트 감소 감지: $_currentCount -> $newCount');
       _currentCount = newCount;
+      _lastUpdatedCount = newCount; // 필드 값 업데이트 추적
+
+      // 필드 값 업데이트
+      await _updateFieldValue(newCount);
+
       onCountChanged?.call(_currentCount);
     }
   }
+
+  /// 필드 값 업데이트 (카운트가 동일할 때)
+  /// 동일한 카운트 값에 대해서는 중복 요청하지 않음
+  Future<void> _updateFieldsIfNeeded(int count) async {
+    // 마지막으로 업데이트한 카운트와 다를 때만 필드 값 업데이트
+    if (_lastUpdatedCount != count) {
+      // logger.d('카운트 검증: $count (변화 없음, 필드 값 업데이트)');
+      _lastUpdatedCount = count;
+
+      // 필드 값 업데이트
+      await _updateFieldValue(count);
+
+      onCountChanged?.call(count);
+    } else {
+      // logger.d('카운트 검증: $count (변화 없음, 필드 값도 동일하여 스킵)');
+    }
+  }
+
+  /// 필드 값 업데이트 (managed_printer.dart의 sendPrintJob 로직 참고)
+  /// 카운트 값을 hex로 변환하여 필드에 업데이트
+  Future<void> _updateFieldValue(int count) async {
+    // jobName과 fieldName이 설정되어 있을 때만 필드 업데이트 수행
+    if (_jobName == null || _fieldName == null) {
+      logger.d('필드 업데이트 스킵: jobName 또는 fieldName이 설정되지 않음');
+      return;
+    }
+
+    try {
+      final uniqueCode = "00000";
+      final fieldValue = uniqueCode + _toHex(count);
+
+      // 1. Job 선택
+      await socket.selectJob(_jobName!);
+
+      // // 2. 작업 데이터 요청
+      await socket.requestJobData(_fieldName!);
+
+      // 3. 필드 값 업데이트
+      await socket.updateField(_fieldName!, fieldValue);
+
+      logger.i('필드 값 업데이트 완료: $_fieldName = $fieldValue (카운트: $count)');
+    } catch (e) {
+      logger.e('필드 값 업데이트 실패: $e');
+    }
+  }
+
+  /// 숫자를 8자리 hex 문자열로 변환 (managed_printer.dart의 _toHex 로직 참고)
+  String _toHex(int number) => number.toRadixString(16).padLeft(6, '0').toUpperCase();
 
   /// GPC 응답에서 카운트 값 파싱
   /// 응답 형식: PCS|total|batch|...
   Map<String, int>? _parseCountsFromResponse(String response) {
     try {
-      logger.i('response: $response');
+      // logger.i('response: $response');
       if (response.startsWith(ZipherCommandEnum.pcs.code)) {
         final parts = response.split('|');
         if (parts.length >= 3) {
@@ -182,11 +298,35 @@ class ZipherHybridCounter {
   }
 
   /// 모니터링 중지
-  void stopMonitoring() {
+  /// 진행 중인 요청이 완료될 때까지 대기하여 안전하게 중지
+  Future<void> stopMonitoring() async {
+    if (!_isMonitoring) {
+      logger.d('이미 모니터링이 중지되어 있습니다.');
+      return;
+    }
+
+    logger.i('모니터링 중지 요청...');
+
+    // 모니터링 플래그를 먼저 false로 설정하여 새로운 요청 방지
     _isMonitoring = false;
+
+    // 타이머 취소
     _verificationTimer?.cancel();
     _verificationTimer = null;
-    logger.i('Zipher 폴링 모니터링 중지');
+
+    // 진행 중인 검증이 완료될 때까지 대기 (최대 5초)
+    int waitCount = 0;
+    while (_isVerifying && waitCount < 50) {
+      await Future.delayed(const Duration(milliseconds: 100));
+      waitCount++;
+    }
+
+    if (_isVerifying) {
+      logger.w('모니터링 중지 대기 시간 초과 (5초). 강제 중지합니다.');
+      _isVerifying = false;
+    }
+
+    logger.i('Zipher 폴링 모니터링 중지 완료');
   }
 
   /// 현재 카운트 조회
@@ -201,7 +341,7 @@ class ZipherHybridCounter {
     logger.i('카운트 리셋');
   }
 
-  void dispose() {
-    stopMonitoring();
+  Future<void> dispose() async {
+    await stopMonitoring();
   }
 }

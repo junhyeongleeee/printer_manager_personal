@@ -338,7 +338,7 @@ extension ZipherCommandEnumExtension on ZipherCommandEnum {
   String buildWithParam(String param) => '$code|$param|';
 
   /// 여러 파라미터로 명령어 생성
-  String buildWithParams(List<String> params) => '$code|${params.join('|')}|';
+  String buildWithParams(List<String> params) => '$code|${params.join('=')}|';
 
   /// 필드 맵으로 명령어 생성 (JDU, SLA 등)
   String buildWithFields(Map<String, String> fields) {

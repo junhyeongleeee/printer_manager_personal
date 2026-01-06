@@ -24,8 +24,9 @@ class PrinterListNotifier extends StateNotifier<List<ManagedPrinter>> {
   }
 
   Future<void> removePrinter(ManagedPrinter printer) async {
-    //printer.dispose(); // 소켓 연결 해제
-    state.where((p) => p == printer).first.dispose();
+    // 모니터링 중지 후 dispose
+    await printer.stopPrintMonitoring();
+    printer.dispose(); // 소켓 연결 해제
     state = state.where((p) => p != printer).toList(); // 리스트에서 제거
   }
 
@@ -37,8 +38,9 @@ class PrinterListNotifier extends StateNotifier<List<ManagedPrinter>> {
     await state.firstWhere((p) => p == printer).connect();
   }
 
-  void clear() {
+  Future<void> clear() async {
     for (final printer in state) {
+      await printer.stopPrintMonitoring();
       printer.dispose();
     }
     state = [];
@@ -80,9 +82,11 @@ class PrinterListNotifier extends StateNotifier<List<ManagedPrinter>> {
 
     final orderId = ref.read(prototypePrinterProvider).order?.orderId;
 
-    printer.totalPrintWork = (printer.totalPrintWork ?? 0) + (end - start + 1);
-    printer.startDate = formatted;
-    printer.printStatus = '인쇄 중';
+    printer.updateFields(
+      totalPrintWork: (printer.totalPrintWork ?? 0) + (end - start + 1),
+      startDate: formatted,
+      printStatus: '인쇄 중',
+    );
     String jobName = "a";
     logger.i("printer.printStatus: ${printer.printStatus}");
     final request_start = UpdatePrinterjobRequest(status: "IN_PROGRESS", message: "인쇄 중");
@@ -98,7 +102,7 @@ class PrinterListNotifier extends StateNotifier<List<ManagedPrinter>> {
     await printer.printJobRepeatedly(jobName: jobName, uniqueCode: code, start: start, end: end);
 
     final request_complete = UpdatePrinterjobRequest(status: "COMPLETED", message: "인쇄 완료");
-    printer.endDate = formatted;
+    printer.updateFields(endDate: formatted);
     final response2 = await printerRepository.updatePrinterJob(jobId, request_complete);
     logger.i("updatePrinterJob response: $response2");
 
