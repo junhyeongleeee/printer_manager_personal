@@ -61,6 +61,10 @@ class ManagedPrinter extends ChangeNotifier {
   // 카운트 변경 콜백 (UI 업데이트용)
   Function(ManagedPrinter)? onCountUpdate;
 
+  // 필드 값 요청 함수 (중앙 관리자에게 필드 값 요청)
+  // Riverpod Ref를 통해 필드 값 관리자에 접근
+  Future<String?> Function()? _fieldValueRequestCallback;
+
   ManagedPrinter({
     required this.index,
     required this.id,
@@ -190,6 +194,13 @@ class ManagedPrinter extends ChangeNotifier {
     }
   }
 
+  /// 필드 값 요청 콜백 설정 (PrinterListProvider에서 호출)
+  /// 콜백은 이미 uniqueCode + 6자리 HEX로 포맷된 문자열을 반환해야 함
+  void setFieldValueRequestCallback(Future<String?> Function() callback) {
+    _fieldValueRequestCallback = callback;
+    logger.i('[$name] 필드 값 요청 콜백 설정됨');
+  }
+
   /// Zipher 인쇄 감지 모니터링 시작
   void _startPrintMonitoring(ZipherSocket zipherSocket) {
     try {
@@ -221,6 +232,7 @@ class ManagedPrinter extends ChangeNotifier {
           logger.i('[$name] 인쇄 완료 감지 (총: $_currentPrintCount장)');
           _updatePrinterStatus('인쇄 완료 ($_currentPrintCount장)');
         },
+        onRequestFieldValue: _fieldValueRequestCallback, // 중앙 관리자에게 필드 값 요청
       );
 
       logger.i('[$name] Zipher 인쇄 감지 모니터링 시작');
@@ -236,6 +248,7 @@ class ManagedPrinter extends ChangeNotifier {
       _printCounter = null;
       logger.i('[$name] 인쇄 감지 모니터링 중지');
     }
+    // 필드 값 해제는 외부(PrinterListProvider)에서 처리
   }
 
   /// 현재 인쇄 카운트 조회

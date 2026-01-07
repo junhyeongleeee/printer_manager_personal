@@ -111,8 +111,10 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
   Future<void> _initConnection() async {
     final printerList = ref.read(printerListProvider);
     for (final printer in printerList) {
-      final response = await printer.connect();
-      logger.i("initConnection- printer: $printer, connection: $response");
+      // PrinterListNotifier.connect를 통해 연결해야
+      // 필드 값 관리자(FieldValueManager)가 함께 초기화된다.
+      await ref.read(printerListProvider.notifier).connect(printer);
+      logger.i("initConnection- printer: $printer, connection initialized with FieldValueManager");
       _setupCountUpdateCallback(printer);
     }
   }

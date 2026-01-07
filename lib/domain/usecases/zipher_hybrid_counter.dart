@@ -27,6 +27,10 @@ class ZipherHybridCounter {
   Function()? onPrintStarted;
   Function()? onPrintCompleted;
 
+  // 필드 값 요청 콜백 (중앙 관리자에게 필드 값 요청)
+  // 반환: 프린터에 바로 전송 가능한 포맷된 필드 값 (uniqueCode + HEX), null이면 사용 가능한 값이 없음
+  Future<String?> Function()? onRequestFieldValue;
+
   ZipherHybridCounter(this.socket);
 
   /// 폴링 모니터링 시작
@@ -34,6 +38,7 @@ class ZipherHybridCounter {
   /// [verificationInterval]: 폴링 주기 (기본 2초)
   /// [jobName]: 필드 업데이트에 사용할 Job 이름 (선택사항)
   /// [fieldName]: 필드 업데이트에 사용할 필드 이름 (선택사항, 기본값: 'Field00')
+  /// [onRequestFieldValue]: 필드 값 요청 콜백 (중앙 관리자에게 필드 값 요청, 포맷된 문자열 반환)
   /// 주기적으로 GPC와 GST 명령으로 카운트와 상태를 조회
   Future<void> startHybridMonitoring({
     Duration verificationInterval = const Duration(seconds: 2),
@@ -42,6 +47,7 @@ class ZipherHybridCounter {
     Function(int count)? onCountChanged,
     Function()? onPrintStarted,
     Function()? onPrintCompleted,
+    Future<String?> Function()? onRequestFieldValue,
   }) async {
     if (_isMonitoring) {
       logger.w('이미 모니터링 중입니다.');
@@ -51,6 +57,7 @@ class ZipherHybridCounter {
     this.onCountChanged = onCountChanged;
     this.onPrintStarted = onPrintStarted;
     this.onPrintCompleted = onPrintCompleted;
+    this.onRequestFieldValue = onRequestFieldValue;
 
     // 필드 업데이트 설정
     _jobName = jobName;
@@ -247,7 +254,7 @@ class ZipherHybridCounter {
   }
 
   /// 필드 값 업데이트 (managed_printer.dart의 sendPrintJob 로직 참고)
-  /// 카운트 값을 hex로 변환하여 필드에 업데이트`
+  /// 중앙 관리자에게 포맷된 필드 값을 요청하고 업데이트
   Future<void> _updateFieldValue(int count) async {
     // jobName과 fieldName이 설정되어 있을 때만 필드 업데이트 수행
     if (_jobName == null || _fieldName == null) {
@@ -256,13 +263,27 @@ class ZipherHybridCounter {
     }
 
     try {
-      final uniqueCode = "00000";
-      final fieldValue = uniqueCode + _toHex(count);
+      // 중앙 관리자에게 포맷된 필드 값 요청
+      String? fieldValue;
+      if (onRequestFieldValue != null) {
+        fieldValue = await onRequestFieldValue!();
+        if (fieldValue == null) {
+          logger.w('필드 값 할당 실패: 사용 가능한 필드 값이 없습니다.');
+          return;
+        }
+        logger.d('중앙 관리자로부터 필드 값 할당받음: $fieldValue (카운트: $count)');
+      } else {
+        // 콜백이 없으면 기존 방식 사용 (하위 호환성)
+        // 기존 uniqueCode + HEX 포맷 직접 구성
+        final uniqueCode = "00000"; // TODO: 필요한 경우 주문 정보에서 가져오도록 개선
+        fieldValue = uniqueCode + _toHex(count);
+        logger.d('필드 값 요청 콜백이 없어 기존 방식 사용: $fieldValue');
+      }
 
       // 1. Job 선택
       await socket.selectJob(_jobName!);
 
-      // // 2. 작업 데이터 요청
+      // 2. 작업 데이터 요청
       await socket.requestJobData(_fieldName!);
 
       // 3. 필드 값 업데이트

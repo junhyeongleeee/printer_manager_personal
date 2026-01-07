@@ -38,7 +38,7 @@ class ZipherSocket implements PrinterSocket {
           const completionCodes = {'ACK', 'ERR'};
           const completionPrefixCodes = {'STS', 'JDL', 'FLT', 'WRN', 'JOB', 'PCS', 'JDI'};
 
-          logger.i("receive message: $trimmed");
+          // logger.i("receive message: $trimmed");
 
           if (_responseCompleter != null && !_responseCompleter!.isCompleted) {
             _responseBuffer.add(trimmed);
@@ -54,14 +54,14 @@ class ZipherSocket implements PrinterSocket {
             onData?.call(trimmed);
           }
         }
-        logger.i("receive end");
+        // logger.i("receive end");
       },
       onDone: () {
         if (_responseCompleter != null && !_responseCompleter!.isCompleted) {
           _responseCompleter!.completeError(StateError("Socket closed before response."));
         }
         _cleanup();
-        logger.i("receieve message done, disconnect");
+        // logger.i("receieve message done, disconnect");
         onDone?.call();
       },
       onError: (error) {
@@ -69,7 +69,7 @@ class ZipherSocket implements PrinterSocket {
           _responseCompleter!.completeError(error);
         }
         _cleanup();
-        logger.i("receieve message error, disconnect");
+        // logger.i("receieve message error, disconnect");
         onError?.call(error);
       },
       cancelOnError: true,
