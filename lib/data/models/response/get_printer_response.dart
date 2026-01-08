@@ -4,7 +4,7 @@ part 'get_printer_response.freezed.dart';
 part 'get_printer_response.g.dart';
 
 @freezed
-class GetPrinterResponse with _$GetPrinterResponse {
+abstract class GetPrinterResponse with _$GetPrinterResponse {
   const factory GetPrinterResponse({
     required String status,
     required String message,
@@ -17,7 +17,7 @@ class GetPrinterResponse with _$GetPrinterResponse {
 }
 
 @freezed
-class GetPrinterResponseData with _$GetPrinterResponseData {
+abstract class GetPrinterResponseData with _$GetPrinterResponseData {
   const factory GetPrinterResponseData({
     required int processingCompanyPrinterIndex,
     required String printerName,

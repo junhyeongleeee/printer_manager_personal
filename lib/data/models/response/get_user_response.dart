@@ -4,7 +4,7 @@ part 'get_user_response.freezed.dart';
 part 'get_user_response.g.dart';
 
 @freezed
-class GetUserResponse with _$GetUserResponse {
+abstract class GetUserResponse with _$GetUserResponse {
   const factory GetUserResponse({
     required String status,
     required String message,
@@ -17,7 +17,7 @@ class GetUserResponse with _$GetUserResponse {
 }
 
 @freezed
-class GetUserResponseData with _$GetUserResponseData {
+abstract class GetUserResponseData with _$GetUserResponseData {
   const factory GetUserResponseData({
     required String userId,
     required String companyName,
@@ -33,7 +33,7 @@ class GetUserResponseData with _$GetUserResponseData {
 }
 
 @freezed
-class InstitutionData with _$InstitutionData {
+abstract class InstitutionData with _$InstitutionData {
   const factory InstitutionData({
     required String institutionId,
     required String institutionName,

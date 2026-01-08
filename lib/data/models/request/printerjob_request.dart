@@ -4,7 +4,7 @@ part 'printerjob_request.freezed.dart';
 part 'printerjob_request.g.dart';
 
 @freezed
-class PrinterjobRequest with _$PrinterjobRequest {
+abstract class PrinterjobRequest with _$PrinterjobRequest {
   const factory PrinterjobRequest({
     required int orderId,
     required int processingCompanyPrinterId,

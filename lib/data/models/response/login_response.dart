@@ -4,7 +4,7 @@ part 'login_response.freezed.dart';
 part 'login_response.g.dart';
 
 @freezed
-class LoginResponse with _$LoginResponse {
+abstract class LoginResponse with _$LoginResponse {
   const factory LoginResponse({
     required String status,
     required String message,
@@ -16,7 +16,7 @@ class LoginResponse with _$LoginResponse {
 }
 
 @freezed
-class LoginResponseData with _$LoginResponseData {
+abstract class LoginResponseData with _$LoginResponseData {
   const factory LoginResponseData({
     required bool isFirst,
     required String accessToken,

@@ -4,7 +4,7 @@ part 'warehouse_request.freezed.dart';
 part 'warehouse_request.g.dart';
 
 @freezed
-class WarehouseRequest with _$WarehouseRequest {
+abstract class WarehouseRequest with _$WarehouseRequest {
   const factory WarehouseRequest({
     required int orderId,
     required String name,

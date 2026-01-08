@@ -4,7 +4,7 @@ part 'get_order_response.freezed.dart';
 part 'get_order_response.g.dart';
 
 @freezed
-class GetOrderResponse with _$GetOrderResponse {
+abstract class GetOrderResponse with _$GetOrderResponse {
   const factory GetOrderResponse({
     required String status,
     required String message,
@@ -17,7 +17,7 @@ class GetOrderResponse with _$GetOrderResponse {
 }
 
 @freezed
-class GetOrderResponseData with _$GetOrderResponseData {
+abstract class GetOrderResponseData with _$GetOrderResponseData {
   const factory GetOrderResponseData({
     required int orderId,
     required int institutionId,

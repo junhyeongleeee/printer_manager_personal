@@ -4,7 +4,7 @@ part 'update_printerjob_response.freezed.dart';
 part 'update_printerjob_response.g.dart';
 
 @freezed
-class UpdatePrinterjobResponse with _$UpdatePrinterjobResponse {
+abstract class UpdatePrinterjobResponse with _$UpdatePrinterjobResponse {
   const factory UpdatePrinterjobResponse({
     required String status,
     required String message,

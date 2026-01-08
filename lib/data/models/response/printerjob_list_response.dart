@@ -4,7 +4,7 @@ part 'printerjob_list_response.freezed.dart';
 part 'printerjob_list_response.g.dart';
 
 @freezed
-class PrinterjobListResponse with _$PrinterjobListResponse {
+abstract class PrinterjobListResponse with _$PrinterjobListResponse {
   const factory PrinterjobListResponse({
     required String status,
     required String message,
@@ -17,7 +17,7 @@ class PrinterjobListResponse with _$PrinterjobListResponse {
 }
 
 @freezed
-class PrinterjobListResponseData with _$PrinterjobListResponseData {
+abstract class PrinterjobListResponseData with _$PrinterjobListResponseData {
   const factory PrinterjobListResponseData({
     required List<PrintJob> printJobList,
   }) = _PrinterjobListResponseData;
@@ -27,7 +27,7 @@ class PrinterjobListResponseData with _$PrinterjobListResponseData {
 }
 
 @freezed
-class PrintJob with _$PrintJob {
+abstract class PrintJob with _$PrintJob {
   const factory PrintJob({
     required int orderPrintJobId,
     required int processingCompanyPrinterId,

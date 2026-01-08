@@ -4,7 +4,7 @@ part 'printers_request.freezed.dart';
 part 'printers_request.g.dart';
 
 @freezed
-class PrintersRequest with _$PrintersRequest {
+abstract class PrintersRequest with _$PrintersRequest {
   const factory PrintersRequest({
     required String name,
     required String model,

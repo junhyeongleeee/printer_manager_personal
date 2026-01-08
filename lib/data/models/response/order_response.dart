@@ -4,7 +4,7 @@ part 'order_response.freezed.dart';
 part 'order_response.g.dart';
 
 @freezed
-class OrderResponse with _$OrderResponse {
+abstract class OrderResponse with _$OrderResponse {
   const factory OrderResponse({
     required String status,
     required String message,
@@ -17,7 +17,7 @@ class OrderResponse with _$OrderResponse {
 }
 
 @freezed
-class OrderResponseDataWrapper with _$OrderResponseDataWrapper {
+abstract class OrderResponseDataWrapper with _$OrderResponseDataWrapper {
   const factory OrderResponseDataWrapper({
     required int orderCount,
     required List<OrderResponseData> orderList,
@@ -28,7 +28,7 @@ class OrderResponseDataWrapper with _$OrderResponseDataWrapper {
 }
 
 @freezed
-class OrderResponseData with _$OrderResponseData {
+abstract class OrderResponseData with _$OrderResponseData {
   const factory OrderResponseData({
     required int orderId,
     required int institutionId,
