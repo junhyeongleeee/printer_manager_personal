@@ -1,7 +1,4 @@
-import 'package:retrofit/retrofit.dart';
 import 'package:dio/dio.dart';
-import '../../models/user_model.dart';
-import 'package:print_manager/domain/entities/user.dart';
 import 'package:print_manager/data/models/request/login_request.dart';
 import 'package:print_manager/data/models/response/login_response.dart';
 import 'package:print_manager/data/models/request/user_request.dart';
@@ -26,55 +23,109 @@ import 'package:print_manager/data/models/response/printerjob_list_response.dart
 import 'package:print_manager/data/models/request/update_printerjob_request.dart';
 import 'package:print_manager/data/models/response/update_printerjob_response.dart';
 
-part 'api_service.g.dart';
+class ApiService {
+  final Dio _dio;
+  final String? baseUrl;
 
-@RestApi()
-abstract class ApiService {
-  factory ApiService(Dio dio, {String baseUrl}) = _ApiService;
+  ApiService(this._dio, {this.baseUrl});
 
-  //user
-  @POST("/api/v1/print-manager/login")
-  Future<LoginResponse> login(@Body() LoginRequest request);
+  // User APIs
+  Future<LoginResponse> login(LoginRequest request) async {
+    final response = await _dio.post(
+      '/api/v1/print-manager/login',
+      data: request.toJson(),
+    );
+    return LoginResponse.fromJson(response.data);
+  }
 
-  @PATCH("/api/v1/print-manager/user")
-  Future<UserResponse> updateUser(@Body() UserRequest request);
+  Future<UserResponse> updateUser(UserRequest request) async {
+    final response = await _dio.patch(
+      '/api/v1/print-manager/user',
+      data: request.toJson(),
+    );
+    return UserResponse.fromJson(response.data);
+  }
 
-  @GET("/api/v1/print-manager/user")
-  Future<GetUserResponse> getUser();
+  Future<GetUserResponse> getUser() async {
+    final response = await _dio.get('/api/v1/print-manager/user');
+    return GetUserResponse.fromJson(response.data);
+  }
 
-  //printer
-  @POST("/api/v1/print-manager/printers")
-  Future<PrintersResponse> addPrinter(@Body() PrintersRequest request);
+  // Printer APIs
+  Future<PrintersResponse> addPrinter(PrintersRequest request) async {
+    final response = await _dio.post(
+      '/api/v1/print-manager/printers',
+      data: request.toJson(),
+    );
+    return PrintersResponse.fromJson(response.data);
+  }
 
-  @GET("/api/v1/print-manager/printers")
-  Future<PrinterListResponse> printerList();
+  Future<PrinterListResponse> printerList() async {
+    final response = await _dio.get('/api/v1/print-manager/printers');
+    return PrinterListResponse.fromJson(response.data);
+  }
 
-  @GET("/api/v1/print-manager/printers/{printerId}")
-  Future<GetPrinterResponse> getPrinter(@Path() int printerId);
+  Future<GetPrinterResponse> getPrinter(int printerId) async {
+    final response = await _dio.get('/api/v1/print-manager/printers/$printerId');
+    return GetPrinterResponse.fromJson(response.data);
+  }
 
-  @DELETE("/api/v1/print-manager/printers/{printerId}")
-  Future<void> deletePrinter(@Path() int printerId);
+  Future<void> deletePrinter(int printerId) async {
+    await _dio.delete('/api/v1/print-manager/printers/$printerId');
+  }
 
-  //printer job
-  @POST("/api/v1/print-manager/print-jobs")
-  Future<PrinterjobResponse> addPrinterJob(@Body() PrinterjobRequest request);
+  // Printer Job APIs
+  Future<PrinterjobResponse> addPrinterJob(PrinterjobRequest request) async {
+    final response = await _dio.post(
+      '/api/v1/print-manager/print-jobs',
+      data: request.toJson(),
+    );
+    return PrinterjobResponse.fromJson(response.data);
+  }
 
-  @GET("/api/v1/print-manager/print-jobs")
-  Future<PrinterjobListResponse> printerJobList();
+  Future<PrinterjobListResponse> printerJobList() async {
+    final response = await _dio.get('/api/v1/print-manager/print-jobs');
+    return PrinterjobListResponse.fromJson(response.data);
+  }
 
-  @PATCH("/api/v1/print-manager/print-jobs/{printerJobId}")
-  Future<UpdatePrinterjobResponse> updatePrinterJob(@Path() int printerJobId, @Body() UpdatePrinterjobRequest request);
+  Future<UpdatePrinterjobResponse> updatePrinterJob(
+    int printerJobId,
+    UpdatePrinterjobRequest request,
+  ) async {
+    final response = await _dio.patch(
+      '/api/v1/print-manager/print-jobs/$printerJobId',
+      data: request.toJson(),
+    );
+    return UpdatePrinterjobResponse.fromJson(response.data);
+  }
 
-  //order
-  @GET("/api/v1/print-manager/Orders")
-  Future<OrderResponse> orderList();
+  // Order APIs
+  Future<OrderResponse> orderList() async {
+    final response = await _dio.get('/api/v1/print-manager/Orders');
+    return OrderResponse.fromJson(response.data);
+  }
 
-  @GET("/api/v1/print-manager/Orders/{orderId}")
-  Future<GetOrderResponse> getOrder(@Path() int orderId);
+  Future<GetOrderResponse> getOrder(int orderId) async {
+    final response = await _dio.get('/api/v1/print-manager/Orders/$orderId');
+    return GetOrderResponse.fromJson(response.data);
+  }
 
-  @PATCH("/api/v1/print-manager/Orders/{orderId}")
-  Future<PatchOrderResponse> updateOrder(@Path() int orderId, @Body() PatchOrderRequest request);
+  Future<PatchOrderResponse> updateOrder(
+    int orderId,
+    PatchOrderRequest request,
+  ) async {
+    final response = await _dio.patch(
+      '/api/v1/print-manager/Orders/$orderId',
+      data: request.toJson(),
+    );
+    return PatchOrderResponse.fromJson(response.data);
+  }
 
-  @POST("/api/v1/print-manager/Orders/warehouse")
-  Future<WarehouseResponse> sendToWarehouse(@Body() WarehouseRequest request);
+  Future<WarehouseResponse> sendToWarehouse(WarehouseRequest request) async {
+    final response = await _dio.post(
+      '/api/v1/print-manager/Orders/warehouse',
+      data: request.toJson(),
+    );
+    return WarehouseResponse.fromJson(response.data);
+  }
 }

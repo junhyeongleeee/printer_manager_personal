@@ -12,8 +12,7 @@ abstract class GetOrderResponse with _$GetOrderResponse {
     required String timestamp,
   }) = _GetOrderResponse;
 
-  factory GetOrderResponse.fromJson(Map<String, dynamic> json) =>
-      _$GetOrderResponseFromJson(json);
+  factory GetOrderResponse.fromJson(Map<String, dynamic> json) => _$GetOrderResponseFromJson(json);
 }
 
 @freezed
@@ -35,6 +34,5 @@ abstract class GetOrderResponseData with _$GetOrderResponseData {
     required String regDate,
   }) = _GetOrderResponseData;
 
-  factory GetOrderResponseData.fromJson(Map<String, dynamic> json) =>
-      _$GetOrderResponseDataFromJson(json);
+  factory GetOrderResponseData.fromJson(Map<String, dynamic> json) => _$GetOrderResponseDataFromJson(json);
 }

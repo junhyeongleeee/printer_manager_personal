@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:meta/meta.dart';
 import 'package:print_manager/core/services/logger_service.dart';
+import 'package:print_manager/presentation/providers/field_value_state_saver_provider.dart';
+import 'package:print_manager/data/models/order_field_value_state.dart';
 
 /// 필드 값 상태
 enum FieldValueStatus {
@@ -43,9 +45,9 @@ class FieldValueManagerState {
     Map<int, AssignedFieldValue>? assignedValues,
     Set<int>? freeValues,
     int? nextAvailableValue,
-  }) : assignedValues = assignedValues ?? {},
-       freeValues = freeValues ?? {},
-       nextAvailableValue = nextAvailableValue ?? startCode;
+  })  : assignedValues = assignedValues ?? {},
+        freeValues = freeValues ?? {},
+        nextAvailableValue = nextAvailableValue ?? startCode;
 
   /// 사용 가능한 필드 값 개수 (freeValues + 아직 쓰지 않은 값)
   int get availableCount {
@@ -81,7 +83,12 @@ final fieldValueManagerProvider = StateNotifierProvider<FieldValueManagerNotifie
 });
 
 class FieldValueManagerNotifier extends StateNotifier<FieldValueManagerState?> {
-  FieldValueManagerNotifier() : super(null);
+  final int? orderId; // 발주 ID (1대1 대응)
+  final FieldValueStateSaver? _saver; // Isar 저장 관리자
+
+  FieldValueManagerNotifier({this.orderId, FieldValueStateSaver? saver})
+      : _saver = saver,
+        super(null);
 
   Timer? _timeoutTimer;
   // 할당만 된 상태(assigned)로 이 시간 이상 유지되면 오류로 간주하고 재사용 풀에 되돌림
@@ -92,6 +99,137 @@ class FieldValueManagerNotifier extends StateNotifier<FieldValueManagerState?> {
   void initialize({required int startCode, required int endCode, required String uniqueCode}) {
     logger.i('필드 값 관리자 초기화: startCode=$startCode, endCode=$endCode, uniqueCode=$uniqueCode');
     state = FieldValueManagerState(startCode: startCode, endCode: endCode, uniqueCode: uniqueCode);
+
+    // 초기 메타데이터 저장 (nextAvailableValue는 startCode로 초기화)
+    if (orderId != null && _saver != null) {
+      _saver!.saveMetadataImmediately(
+        orderId: orderId!,
+        nextAvailableValue: state!.nextAvailableValue,
+        startCode: startCode,
+        endCode: endCode,
+        uniqueCode: uniqueCode,
+      );
+    }
+
+    _startTimeoutCheck();
+  }
+
+  /// 필드 값 범위 초기화 및 Isar에서 상태 복원
+  /// 발주 선택 시 호출: 저장된 데이터가 있으면 복원, 없으면 새로 초기화
+  /// [currentTotalCount]: 현재까지 인쇄된 총 카운트 (필드 값과 동기화하기 위해 필요)
+  Future<void> initializeAndRestore({
+    required int startCode,
+    required int endCode,
+    required String uniqueCode,
+    int? currentTotalCount,
+  }) async {
+    if (orderId == null || _saver == null) {
+      // orderId나 saver가 없으면 일반 초기화만 수행
+      initialize(startCode: startCode, endCode: endCode, uniqueCode: uniqueCode);
+      return;
+    }
+
+    logger.i('필드 값 관리자 초기화 및 복원: orderId=$orderId, startCode=$startCode, endCode=$endCode, uniqueCode=$uniqueCode');
+
+    // 1. Isar에서 메타데이터 조회
+    final metadata = await _saver!.getMetadata(orderId!);
+
+    if (metadata != null) {
+      // 저장된 데이터가 있으면 복원
+      logger.i('저장된 메타데이터 복원: nextAvailableValue=${metadata.nextAvailableValue}');
+
+      // 2. 미완료 필드 값 상태 조회 (assigned, inUse, error 상태)
+      final incompleteStates = await _saver!.getIncompleteStates(orderId!);
+
+      // 3. 상태 복원
+      final restoredAssignedValues = <int, AssignedFieldValue>{};
+      final restoredFreeValues = <int>{};
+
+      for (final state in incompleteStates) {
+        if (state.status == 'assigned' || state.status == 'inUse') {
+          // 할당된 상태 복원
+          if (state.printerId != null) {
+            restoredAssignedValues[state.printerId!] = AssignedFieldValue(
+              value: state.fieldValue,
+              printerId: state.printerId!,
+              assignedAt: state.assignedAt,
+              status: state.status == 'inUse' ? FieldValueStatus.inUse : FieldValueStatus.assigned,
+            );
+          }
+        } else if (state.status == 'error') {
+          // 오류 상태는 재사용 가능한 값으로 복원
+          restoredFreeValues.add(state.fieldValue);
+        }
+      }
+
+      // 4. nextAvailableValue를 카운트와 동기화
+      // 카운트가 13이면 다음 필드 값은 14가 되어야 함 (startCode + currentTotalCount)
+      int synchronizedNextValue = metadata.nextAvailableValue;
+      if (currentTotalCount != null && currentTotalCount > 0) {
+        final expectedNextValue = startCode + currentTotalCount;
+        // 카운트 기반 값이 더 크면 카운트를 우선 (더 정확함)
+        if (expectedNextValue > synchronizedNextValue) {
+          synchronizedNextValue = expectedNextValue;
+          logger.i(
+              'nextAvailableValue를 카운트와 동기화: $currentTotalCount -> $synchronizedNextValue (기존: ${metadata.nextAvailableValue})');
+        }
+      }
+
+      // 5. 상태 설정
+      state = FieldValueManagerState(
+        startCode: metadata.startCode,
+        endCode: metadata.endCode,
+        uniqueCode: metadata.uniqueCode,
+        assignedValues: restoredAssignedValues,
+        freeValues: restoredFreeValues,
+        nextAvailableValue: synchronizedNextValue,
+      );
+
+      // 동기화된 nextAvailableValue를 Isar에 저장
+      if (synchronizedNextValue != metadata.nextAvailableValue && _saver != null) {
+        _saver!.saveMetadataImmediately(
+          orderId: orderId!,
+          nextAvailableValue: synchronizedNextValue,
+          startCode: metadata.startCode,
+          endCode: metadata.endCode,
+          uniqueCode: metadata.uniqueCode,
+        );
+      }
+
+      logger.i(
+          '상태 복원 완료: assigned=${restoredAssignedValues.length}, free=${restoredFreeValues.length}, nextAvailableValue=$synchronizedNextValue (카운트: $currentTotalCount)');
+    } else {
+      // 저장된 데이터가 없으면 새로 초기화
+      logger.i('저장된 데이터 없음, 새로 초기화');
+
+      // 카운트가 있으면 nextAvailableValue를 카운트에 맞춰 설정
+      int initialNextValue = startCode;
+      if (currentTotalCount != null && currentTotalCount > 0) {
+        initialNextValue = startCode + currentTotalCount;
+        logger.i('초기 nextAvailableValue를 카운트에 맞춰 설정: $currentTotalCount -> $initialNextValue');
+      }
+
+      state = FieldValueManagerState(
+        startCode: startCode,
+        endCode: endCode,
+        uniqueCode: uniqueCode,
+        nextAvailableValue: initialNextValue,
+      );
+
+      // 초기 메타데이터 저장
+      if (orderId != null && _saver != null) {
+        _saver!.saveMetadataImmediately(
+          orderId: orderId!,
+          nextAvailableValue: initialNextValue,
+          startCode: startCode,
+          endCode: endCode,
+          uniqueCode: uniqueCode,
+        );
+      }
+    }
+
+    _saver!.printAllStatistics();
+
     _startTimeoutCheck();
   }
 
@@ -174,6 +312,21 @@ class FieldValueManagerNotifier extends StateNotifier<FieldValueManagerState?> {
       state = state!.copyWith(assignedValues: newAssignedValues, freeValues: newFreeValues);
 
       logger.i('필드 값 재사용 가능 상태로 되돌림: 값 $value (프린터 $printerId, inUse 아님)');
+
+      // Isar에 오류 상태로 저장 (재사용 가능)
+      if (orderId != null && _saver != null) {
+        final currentOrderId = orderId!;
+        final currentSaver = _saver!;
+        currentSaver.getState(currentOrderId, value).then((existingState) {
+          if (existingState != null) {
+            existingState.status = 'error';
+            existingState.errorAt = DateTime.now();
+            existingState.errorReason = '타임아웃 (30초 이상 사용되지 않음)';
+            existingState.updatedAt = DateTime.now();
+            currentSaver.saveImmediately(existingState);
+          }
+        });
+      }
     } else {
       // inUse 상태면 재사용하지 않고 단순 해제만 허용
       releaseFieldValue(printerId);
@@ -222,12 +375,42 @@ class FieldValueManagerNotifier extends StateNotifier<FieldValueManagerState?> {
 
     // 상태 업데이트 (원자적 연산)
     final current = state!;
+    final newNextAvailableValue =
+        (valueToAssign == current.nextAvailableValue) ? current.nextAvailableValue + 1 : current.nextAvailableValue;
+
     state = current.copyWith(
       assignedValues: {...current.assignedValues, printerId: assigned},
       freeValues: newFreeValues,
-      nextAvailableValue:
-          (valueToAssign == current.nextAvailableValue) ? current.nextAvailableValue + 1 : current.nextAvailableValue,
+      nextAvailableValue: newNextAvailableValue,
     );
+
+    // nextAvailableValue가 변경되었으면 Isar에 즉시 저장
+    // saveMetadataImmediately는 비동기로 실행되며, 이벤트 루프에서 저장이 진행됨
+    // UI는 블로킹되지 않으며, 저장 실패 시 자동 재시도됨
+    if (newNextAvailableValue != current.nextAvailableValue && orderId != null && _saver != null) {
+      _saver!.saveMetadataImmediately(
+        orderId: orderId!,
+        nextAvailableValue: newNextAvailableValue,
+        startCode: state!.startCode,
+        endCode: state!.endCode,
+        uniqueCode: state!.uniqueCode,
+      );
+    }
+
+    // 필드 값 할당 시 Isar에 저장 (assigned 상태)
+    if (orderId != null && _saver != null) {
+      final fieldValueState = OrderFieldValueState();
+      fieldValueState.orderId = orderId!;
+      fieldValueState.fieldValue = valueToAssign;
+      fieldValueState.printerId = printerId;
+      fieldValueState.status = 'assigned';
+      fieldValueState.uniqueCode = state!.uniqueCode;
+      fieldValueState.assignedAt = DateTime.now();
+      fieldValueState.createdAt = DateTime.now();
+      fieldValueState.updatedAt = DateTime.now();
+
+      _saver!.saveImmediately(fieldValueState);
+    }
 
     logger.i(
       '필드 값 할당: 프린터 $printerId -> 값 $valueToAssign (범위: ${state!.startCode}-${state!.endCode}, 다음 새 값: ${state!.nextAvailableValue}, free=${state!.freeValues.length})',
@@ -254,6 +437,20 @@ class FieldValueManagerNotifier extends StateNotifier<FieldValueManagerState?> {
       assigned.status = FieldValueStatus.inUse;
       state = state!.copyWith(assignedValues: {...state!.assignedValues, printerId: assigned});
       logger.d('필드 값 사용 중 표시: 프린터 $printerId -> 값 ${assigned.value} (재사용 금지)');
+
+      // Isar에 즉시 저장 (비동기, 블로킹 없음)
+      if (orderId != null && _saver != null) {
+        final currentOrderId = orderId!;
+        final currentSaver = _saver!;
+        currentSaver.getState(currentOrderId, assigned.value).then((existingState) {
+          if (existingState != null) {
+            existingState.status = 'inUse';
+            existingState.inUseAt = DateTime.now();
+            existingState.updatedAt = DateTime.now();
+            currentSaver.saveImmediately(existingState);
+          }
+        });
+      }
     }
   }
 
@@ -308,6 +505,35 @@ class FieldValueManagerNotifier extends StateNotifier<FieldValueManagerState?> {
     state = state!.copyWith(assignedValues: {}, freeValues: {}, nextAvailableValue: state!.startCode);
     _timeoutTimer?.cancel();
     _timeoutTimer = null;
+  }
+
+  /// 발주별 데이터 초기화 (인쇄 완료 시)
+  /// Isar에서 발주별 모든 데이터를 삭제하고 상태를 초기화
+  Future<void> clearOrderData() async {
+    if (orderId == null || _saver == null) {
+      logger.w('orderId나 saver가 없어 데이터 초기화를 수행할 수 없습니다.');
+      return;
+    }
+
+    logger.i('발주별 데이터 초기화 시작: orderId=$orderId');
+
+    // 1. Isar에서 발주별 모든 데이터 삭제
+    await _saver!.clearOrderData(orderId!);
+
+    // 2. 메모리 상태 초기화
+    if (state != null) {
+      state = state!.copyWith(
+        assignedValues: {},
+        freeValues: {},
+        nextAvailableValue: state!.startCode,
+      );
+    }
+
+    // 3. 타임아웃 타이머 정리
+    _timeoutTimer?.cancel();
+    _timeoutTimer = null;
+
+    logger.i('발주별 데이터 초기화 완료: orderId=$orderId');
   }
 
   @override

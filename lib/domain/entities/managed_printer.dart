@@ -5,6 +5,7 @@ import 'package:print_manager/core/factories/printer_socket_factory.dart';
 import 'package:print_manager/core/services/logger_service.dart';
 import 'package:print_manager/infra/zipher_socket.dart';
 import 'package:print_manager/domain/usecases/zipher_hybrid_counter.dart';
+import 'package:print_manager/domain/entities/order_item.dart';
 
 class ManagedPrinter extends ChangeNotifier {
   final int index;
@@ -56,14 +57,29 @@ class ManagedPrinter extends ChangeNotifier {
 
   // Zipher 인쇄 감지 카운터
   ZipherHybridCounter? _printCounter;
-  int _currentPrintCount = 0;
+  int _currentPrintCount = 0; // 하위 호환성을 위해 유지 (선택된 발주의 카운트와 동기화)
+
+  // 발주별 카운트 관리 (발주 ID -> 카운트)
+  final Map<int, int> _orderCounts = {};
+
+  // 발주별 기준점 관리 (발주 선택 시점의 프린터 전체 카운트)
+  // 발주별 카운트 = 현재 전체 카운트 - 기준점
+  final Map<int, int> _orderBaselines = {};
 
   // 카운트 변경 콜백 (UI 업데이트용)
   Function(ManagedPrinter)? onCountUpdate;
 
+  // 카운트 저장 콜백 (Isar 저장용)
+  // (orderId, printerId, count) -> void
+  void Function(int orderId, int printerId, int count)? onCountSave;
+
   // 필드 값 요청 함수 (중앙 관리자에게 필드 값 요청)
   // Riverpod Ref를 통해 필드 값 관리자에 접근
   Future<String?> Function()? _fieldValueRequestCallback;
+
+  // 선택된 발주 (OrderItem)
+  OrderItem? _selectedOrder;
+  OrderItem? get selectedOrder => _selectedOrder;
 
   ManagedPrinter({
     required this.index,
@@ -75,8 +91,8 @@ class ManagedPrinter extends ChangeNotifier {
     PrinterProtocol? protocol,
     PrinterSocket? socket,
     //required this.repository,
-  }) : protocol = protocol ?? PrinterProtocol.zipher,
-       socket = socket ?? PrinterSocketFactory.create(protocol ?? PrinterProtocol.zipher) {
+  })  : protocol = protocol ?? PrinterProtocol.zipher,
+        socket = socket ?? PrinterSocketFactory.create(protocol ?? PrinterProtocol.zipher) {
     this.socket.setOnData(_handleData);
     this.socket.setOnDone(() => _updateConnectionStatus('연결 종료'));
     this.socket.setOnError((e) => _updateConnectionStatus('에러: $e'));
@@ -199,6 +215,12 @@ class ManagedPrinter extends ChangeNotifier {
   void setFieldValueRequestCallback(Future<String?> Function() callback) {
     _fieldValueRequestCallback = callback;
     logger.i('[$name] 필드 값 요청 콜백 설정됨');
+
+    // ZipherHybridCounter가 이미 시작된 경우 콜백도 업데이트
+    if (_printCounter != null) {
+      _printCounter!.updateFieldValueCallback(callback);
+      logger.i('[$name] ZipherHybridCounter 필드 값 요청 콜백 업데이트됨');
+    }
   }
 
   /// Zipher 인쇄 감지 모니터링 시작
@@ -215,10 +237,51 @@ class ManagedPrinter extends ChangeNotifier {
         fieldName: "Field00",
         verificationInterval: const Duration(milliseconds: 200),
         onCountChanged: (count) {
-          _currentPrintCount = count;
-          logger.i('[$name] 인쇄 카운트 변경: $count장');
+          // count는 프린터의 전체 카운트 (발주와 무관)
+          // 선택된 발주가 있으면 기준점 대비 증가분만 발주별 카운트에 반영
+          if (_selectedOrder != null && id != null) {
+            final orderId = _selectedOrder!.orderId;
+            final printerId = id!;
+
+            // 기준점이 이미 설정되어 있는지 확인
+            if (_orderBaselines.containsKey(orderId)) {
+              final baseline = _orderBaselines[orderId]!;
+
+              // 기준점이 0이고 현재 카운트가 0보다 크면, 모니터링 시작 시점의 첫 카운트를 기준점으로 설정
+              // (발주 선택 시점에 _printCounter가 아직 시작되지 않아 기준점이 0으로 설정된 경우)
+              if (baseline == 0 && count > 0) {
+                logger.i('[$name] 기준점이 0이므로 첫 카운트($count)를 기준점으로 설정: orderId=$orderId');
+                _orderBaselines[orderId] = count;
+                _orderCounts[orderId] = 0;
+                _currentPrintCount = 0;
+                // 기준점 설정만 하고 카운트는 0으로 유지 (아직 인쇄되지 않았으므로)
+                // UI 업데이트를 위해 notifyListeners 호출 (아래 코드 실행)
+              } else {
+                // 발주별 카운트 = 현재 전체 카운트 - 기준점
+                final orderCount = (count - baseline).clamp(0, double.infinity).toInt();
+                _orderCounts[orderId] = orderCount;
+                _currentPrintCount = orderCount; // 하위 호환성
+                logger.i('[$name] 발주 $orderId 인쇄 카운트: $orderCount장 (전체: $count장, 기준점: $baseline장)');
+
+                // Isar에 카운트 저장 (콜백을 통해)
+                onCountSave?.call(orderId, printerId, orderCount);
+              }
+            } else {
+              // 기준점이 없으면 첫 카운트를 기준점으로 설정
+              logger.i('[$name] 발주 $orderId 기준점이 없으므로 첫 카운트($count)를 기준점으로 설정');
+              _orderBaselines[orderId] = count;
+              _orderCounts[orderId] = 0;
+              _currentPrintCount = 0;
+              // 기준점 설정만 하고 카운트는 0으로 유지 (아직 인쇄되지 않았으므로)
+            }
+          } else {
+            // 발주가 선택되지 않았으면 전체 카운트만 업데이트 (하위 호환성)
+            _currentPrintCount = count;
+            logger.i('[$name] 인쇄 카운트 변경: $count장 (발주 미선택)');
+          }
+
           // 여기서 UI 업데이트나 상태 변경 로직 추가 가능
-          _updatePrinterStatus('인쇄 중 (${count}장)');
+          _updatePrinterStatus('인쇄 중 (${_currentPrintCount}장)');
           // ChangeNotifier로 UI 자동 업데이트
           notifyListeners();
           // 기존 콜백 방식도 유지 (하위 호환성)
@@ -251,8 +314,79 @@ class ManagedPrinter extends ChangeNotifier {
     // 필드 값 해제는 외부(PrinterListProvider)에서 처리
   }
 
-  /// 현재 인쇄 카운트 조회
-  int get currentPrintCount => _currentPrintCount;
+  /// 현재 인쇄 카운트 조회 (선택된 발주의 카운트 반환)
+  /// 발주가 선택되지 않았으면 전체 카운트 반환
+  int get currentPrintCount {
+    if (_selectedOrder != null) {
+      return _orderCounts[_selectedOrder!.orderId] ?? 0;
+    }
+    return _currentPrintCount;
+  }
+
+  /// 발주별 카운트 조회
+  int getOrderCount(int orderId) {
+    return _orderCounts[orderId] ?? 0;
+  }
+
+  /// 발주별 기준점 조회
+  int? getOrderBaseline(int orderId) {
+    return _orderBaselines[orderId];
+  }
+
+  /// 현재 프린터의 전체 카운트 조회 (ZipherHybridCounter 또는 _currentPrintCount)
+  int getCurrentTotalCount() {
+    return _printCounter?.currentCount ?? _currentPrintCount;
+  }
+
+  /// 발주별 카운트 설정 (Isar에서 복원 시 사용)
+  /// 복원된 카운트를 기준으로 기준점을 역산하여 설정
+  void setOrderCount(int orderId, int restoredCount) {
+    // 현재 프린터의 전체 카운트 가져오기
+    final currentTotalCount = _printCounter?.currentCount ?? _currentPrintCount;
+
+    // 기준점이 이미 설정되어 있는지 확인
+    final existingBaseline = _orderBaselines[orderId];
+
+    if (existingBaseline != null) {
+      // 기준점이 이미 설정되어 있으면, 복원된 카운트가 유효한지 검증
+      // 발주별 카운트 = 현재 전체 카운트 - 기준점
+      final calculatedCount = (currentTotalCount - existingBaseline).clamp(0, double.infinity).toInt();
+
+      // 복원된 카운트가 계산된 카운트보다 크면 무효 (다른 발주로 카운팅한 데이터일 수 있음)
+      if (restoredCount > calculatedCount) {
+        logger.w('[$name] 발주 $orderId 복원된 카운트($restoredCount)가 현재 계산된 카운트($calculatedCount)보다 큼. 카운트를 0으로 초기화.');
+        _orderCounts[orderId] = 0;
+        if (_selectedOrder?.orderId == orderId) {
+          _currentPrintCount = 0;
+        }
+        notifyListeners();
+        return;
+      }
+
+      // 복원된 카운트가 유효하면 사용
+      _orderCounts[orderId] = restoredCount;
+      if (_selectedOrder?.orderId == orderId) {
+        _currentPrintCount = restoredCount;
+      }
+
+      logger.i(
+          '[$name] 발주 $orderId 카운트 복원: $restoredCount장 (기준점: $existingBaseline, 전체: $currentTotalCount, 계산된 카운트: $calculatedCount)');
+    } else {
+      // 기준점이 없으면 복원하지 않음
+      // 기준점은 setSelectedOrder에서 설정되어야 함
+      // 기준점이 없다는 것은 발주가 선택되지 않았거나, 아직 기준점이 설정되지 않은 상태
+      logger.w('[$name] 발주 $orderId 카운트 복원 실패: 기준점이 설정되지 않음. 발주를 먼저 선택해야 합니다.');
+      // 기준점을 현재 전체 카운트로 설정하고 카운트를 0으로 초기화
+      _orderBaselines[orderId] = currentTotalCount;
+      _orderCounts[orderId] = 0;
+      if (_selectedOrder?.orderId == orderId) {
+        _currentPrintCount = 0;
+      }
+      logger.i('[$name] 발주 $orderId 기준점을 현재 전체 카운트($currentTotalCount)로 설정하고 카운트를 0으로 초기화');
+    }
+
+    notifyListeners();
+  }
 
   Future<void> sendPrintJob(String jobName, int start, int end) async {
     logger.i("sendPrinterJob Start");
@@ -352,6 +486,43 @@ class ManagedPrinter extends ChangeNotifier {
   }
 
   @override
+
+  /// 발주 선택
+  void setSelectedOrder(OrderItem? order) {
+    if (_selectedOrder?.orderId != order?.orderId) {
+      final previousOrderId = _selectedOrder?.orderId;
+      _selectedOrder = order;
+
+      // 새 발주 선택 시
+      if (order != null) {
+        // 현재 프린터의 전체 카운트를 기준점으로 설정
+        // (ZipherHybridCounter가 반환하는 전체 카운트)
+        final currentTotalCount = _printCounter?.currentCount ?? _currentPrintCount;
+
+        // 발주가 변경되면 항상 현재 전체 카운트를 기준점으로 설정 (이전 발주 카운트 무시)
+        // Isar에서 복원할 때는 setOrderCount에서 별도로 처리
+        _orderBaselines[order.orderId] = currentTotalCount;
+        _orderCounts[order.orderId] = 0;
+        _currentPrintCount = 0; // 새 발주 선택 시 카운트는 0부터 시작
+
+        logger.i('[$name] 발주 ${order.orderId} 선택 및 기준점 설정: $currentTotalCount장 (카운트 초기화: 0)');
+      } else {
+        logger.i('[$name] 발주 해제 (이전 발주 ID: $previousOrderId)');
+      }
+
+      notifyListeners();
+    }
+  }
+
+  /// 발주 해제
+  void clearSelectedOrder() {
+    if (_selectedOrder != null) {
+      _selectedOrder = null;
+      logger.i('[$name] 발주 해제');
+      notifyListeners();
+    }
+  }
+
   void dispose() {
     // 비동기 처리를 시작하되 완료를 기다리지 않음 (dispose는 동기적이어야 함)
     stopPrintMonitoring().catchError((e) {

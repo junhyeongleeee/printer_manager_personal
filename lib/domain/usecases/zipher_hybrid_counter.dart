@@ -176,9 +176,6 @@ class ZipherHybridCounter {
         // 폴링 결과로 카운트 업데이트 (변경 여부와 관계없이 필드 값 업데이트)
         if (newCount != _currentCount) {
           await _updateCount(newCount);
-        } else {
-          // 카운트가 동일하더라도 필드 값을 업데이트 (중복 요청 방지)
-          await _updateFieldsIfNeeded(newCount);
         }
       }
 
@@ -189,15 +186,15 @@ class ZipherHybridCounter {
       }
 
       // GST로 상태도 확인 (백업)
-      final statusResponse = await socket.getPrinterStatus();
+      // final statusResponse = await socket.getPrinterStatus();
 
       // 모니터링 중지 확인 (상태 처리 전)
-      if (!_isMonitoring) {
-        logger.d('모니터링이 중지되어 상태 처리를 취소합니다.');
-        return;
-      }
+      // if (!_isMonitoring) {
+      //   logger.d('모니터링이 중지되어 상태 처리를 취소합니다.');
+      //   return;
+      // }
 
-      _processStatusResponse(statusResponse);
+      // _processStatusResponse(statusResponse);
     } catch (e) {
       // 모니터링이 중지된 경우의 에러는 무시
       if (_isMonitoring) {
@@ -223,34 +220,18 @@ class ZipherHybridCounter {
       await _updateFieldValue(newCount);
 
       onCountChanged?.call(_currentCount);
-    } else if (newCount < _currentCount) {
-      // 카운트가 감소한 경우 (리셋 등)
-      logger.w('카운트 감소 감지: $_currentCount -> $newCount');
-      _currentCount = newCount;
-      _lastUpdatedCount = newCount; // 필드 값 업데이트 추적
-
-      // 필드 값 업데이트
-      await _updateFieldValue(newCount);
-
-      onCountChanged?.call(_currentCount);
     }
-  }
+    // else if (newCount < _currentCount) {
+    //   // 카운트가 감소한 경우 (리셋 등)
+    //   logger.w('카운트 감소 감지: $_currentCount -> $newCount');
+    //   _currentCount = newCount;
+    //   _lastUpdatedCount = newCount; // 필드 값 업데이트 추적
 
-  /// 필드 값 업데이트 (카운트가 동일할 때)
-  /// 동일한 카운트 값에 대해서는 중복 요청하지 않음
-  Future<void> _updateFieldsIfNeeded(int count) async {
-    // 마지막으로 업데이트한 카운트와 다를 때만 필드 값 업데이트
-    if (_lastUpdatedCount != count) {
-      // logger.d('카운트 검증: $count (변화 없음, 필드 값 업데이트)');
-      _lastUpdatedCount = count;
+    //   // 필드 값 업데이트
+    //   await _updateFieldValue(newCount);
 
-      // 필드 값 업데이트
-      await _updateFieldValue(count);
-
-      onCountChanged?.call(count);
-    } else {
-      // logger.d('카운트 검증: $count (변화 없음, 필드 값도 동일하여 스킵)');
-    }
+    //   onCountChanged?.call(_currentCount);
+    // }
   }
 
   /// 필드 값 업데이트 (managed_printer.dart의 sendPrintJob 로직 참고)
@@ -267,18 +248,13 @@ class ZipherHybridCounter {
       String? fieldValue;
       if (onRequestFieldValue != null) {
         fieldValue = await onRequestFieldValue!();
-        if (fieldValue == null) {
-          logger.w('필드 값 할당 실패: 사용 가능한 필드 값이 없습니다.');
-          return;
-        }
-        logger.d('중앙 관리자로부터 필드 값 할당받음: $fieldValue (카운트: $count)');
-      } else {
-        // 콜백이 없으면 기존 방식 사용 (하위 호환성)
-        // 기존 uniqueCode + HEX 포맷 직접 구성
-        final uniqueCode = "00000"; // TODO: 필요한 경우 주문 정보에서 가져오도록 개선
-        fieldValue = uniqueCode + _toHex(count);
-        logger.d('필드 값 요청 콜백이 없어 기존 방식 사용: $fieldValue');
       }
+
+      if (fieldValue == null) {
+        logger.w('필드 값 할당 실패: 사용 가능한 필드 값이 없습니다.');
+        return;
+      }
+      logger.d('중앙 관리자로부터 필드 값 할당받음: $fieldValue (카운트: $count)');
 
       // 1. Job 선택
       await socket.selectJob(_jobName!);
@@ -348,6 +324,12 @@ class ZipherHybridCounter {
     }
 
     logger.i('Zipher 폴링 모니터링 중지 완료');
+  }
+
+  /// 필드 값 요청 콜백 업데이트 (발주 선택 시 호출)
+  void updateFieldValueCallback(Future<String?> Function()? callback) {
+    onRequestFieldValue = callback;
+    logger.i('필드 값 요청 콜백 업데이트됨');
   }
 
   /// 현재 카운트 조회

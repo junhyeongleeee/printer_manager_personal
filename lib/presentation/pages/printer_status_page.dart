@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/printer_list_provider.dart';
+import '../providers/order_list_provider.dart';
+import '../providers/field_value_manager_registry_provider.dart';
+import '../providers/field_value_state_saver_provider.dart';
 import '../../domain/entities/managed_printer.dart';
+import '../../domain/entities/order_item.dart';
 import 'package:print_manager/data/models/request/printers_request.dart';
 import 'package:print_manager/data/repositories/printer_repository_provider.dart';
 import 'package:print_manager/core/services/logger_service.dart';
-import 'package:print_manager/core/enums/printer_protocol.dart';
 
 class PrinterStatusPage extends ConsumerStatefulWidget {
   @override
@@ -94,7 +97,20 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
   Future<void> _initializePrinters() async {
     try {
       await _refreshPrinterList();
+
+      // 발주 목록이 비어있으면 잠시 대기 (다른 페이지에서 로드될 수 있음)
+      final orders = ref.read(orderListProvider);
+      if (orders.isEmpty) {
+        logger.i('발주 목록이 비어있어 복원을 위해 대기합니다...');
+        await Future.delayed(const Duration(milliseconds: 1000));
+      }
+
       await _initConnection();
+
+      // 복원 후 UI 갱신
+      if (mounted) {
+        setState(() {});
+      }
     } catch (e, stack) {
       debugPrint('_initializePrinters error: $e\n$stack');
     }
@@ -116,6 +132,61 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
       await ref.read(printerListProvider.notifier).connect(printer);
       logger.i("initConnection- printer: $printer, connection initialized with FieldValueManager");
       _setupCountUpdateCallback(printer);
+
+      // 프린터별 마지막 선택 발주 복원
+      await _restorePrinterLastOrder(printer);
+    }
+  }
+
+  /// 프린터별 마지막 선택 발주 복원
+  Future<void> _restorePrinterLastOrder(ManagedPrinter printer) async {
+    if (printer.id == null) return;
+
+    try {
+      final saver = await ref.read(fieldValueStateSaverProvider.future);
+      final lastOrderId = await saver.getPrinterLastOrder(printer.id!);
+
+      if (lastOrderId != null) {
+        logger.i('프린터 ${printer.id} 마지막 선택 발주 복원 시도: orderId=$lastOrderId');
+
+        // 발주 목록에서 해당 발주 찾기
+        final orders = ref.read(orderListProvider);
+
+        // 발주 목록이 비어있으면 잠시 대기 후 재시도
+        if (orders.isEmpty) {
+          logger.w('발주 목록이 비어있어 복원을 지연합니다. 잠시 후 재시도합니다.');
+          await Future.delayed(const Duration(milliseconds: 500));
+          final retryOrders = ref.read(orderListProvider);
+          if (retryOrders.isEmpty) {
+            logger.w('발주 목록이 여전히 비어있어 복원을 건너뜁니다.');
+            return;
+          }
+        }
+
+        final order = orders.firstWhere(
+          (o) => o.orderId == lastOrderId,
+          orElse: () {
+            logger.w('발주를 찾을 수 없습니다: orderId=$lastOrderId (발주 목록: ${orders.map((o) => o.orderId).toList()})');
+            throw Exception('발주를 찾을 수 없습니다: $lastOrderId');
+          },
+        );
+
+        // 발주 선택 및 초기화
+        printer.setSelectedOrder(order);
+        await _initializeFieldValueManagerForOrder(printer, order);
+
+        // UI 갱신을 위해 setState 호출
+        if (mounted) {
+          setState(() {});
+        }
+
+        logger.i('프린터 ${printer.id} 마지막 선택 발주 복원 완료: orderId=$lastOrderId, itemName=${order.itemName}');
+      } else {
+        logger.d('프린터 ${printer.id} 마지막 선택 발주 없음');
+      }
+    } catch (e, stackTrace) {
+      logger.e('프린터 마지막 선택 발주 복원 실패: $e\n$stackTrace');
+      // 복원 실패해도 앱은 정상 동작해야 하므로 에러만 로깅
     }
   }
 
@@ -127,7 +198,130 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     printer.onCountUpdate = (updatedPrinter) {
       // ListenableBuilder가 자동으로 처리하므로 여기서는 아무것도 하지 않아도 됨
       // 하지만 필요시 추가 로직을 넣을 수 있음
+
+      // 발주 전체 완료 감지 및 데이터 초기화
+      // _checkAndClearOrderDataIfCompleted(updatedPrinter);
     };
+
+    // 카운트 저장 콜백 설정 (Isar에 저장)
+    printer.onCountSave = (orderId, printerId, count) async {
+      try {
+        final saver = await ref.read(fieldValueStateSaverProvider.future);
+        saver.savePrinterCountImmediately(
+          orderId: orderId,
+          printerId: printerId,
+          count: count,
+        );
+
+        // 총 수량 도달해도 계속 카운팅 가능하도록 자동 중지 로직 제거
+        // await _checkAndStopPrintersIfCompleted(orderId);
+      } catch (e) {
+        logger.e('프린터 카운트 저장 실패: $e');
+      }
+    };
+  }
+
+  /// 같은 발주를 선택한 모든 프린터의 카운트 합산
+  int _getTotalCompletedCountForOrder(int orderId) {
+    final printers = ref.read(printerListProvider);
+    int totalCount = 0;
+
+    for (final printer in printers) {
+      if (printer.selectedOrder?.orderId == orderId) {
+        // 발주별 카운트가 있으면 사용, 없으면 currentPrintCount 사용
+        final count = printer.currentPrintCount;
+        totalCount += count;
+      }
+    }
+
+    return totalCount;
+  }
+
+  /// 발주 전체 완료 감지 및 자동 중지
+  /// 발주의 quantity와 현재 인쇄된 수량을 비교하여 완료 여부 확인
+  Future<void> _checkAndStopPrintersIfCompleted(int orderId) async {
+    final printers = ref.read(printerListProvider);
+    final selectedPrinters = printers.where((p) => p.selectedOrder?.orderId == orderId).toList();
+
+    if (selectedPrinters.isEmpty) return;
+
+    // 첫 번째 프린터의 발주 정보 사용 (모든 프린터가 같은 발주를 선택했으므로)
+    final order = selectedPrinters.first.selectedOrder;
+    if (order == null) return;
+
+    final orderQuantity = order.quantity;
+    if (orderQuantity <= 0) return; // 발주 수량이 없으면 체크하지 않음
+
+    // 같은 발주를 선택한 모든 프린터의 카운트 합산
+    final totalCompleted = _getTotalCompletedCountForOrder(orderId);
+
+    // 완료 여부 확인
+    if (totalCompleted >= orderQuantity) {
+      logger.i('발주 전체 완료 감지: orderId=$orderId, quantity=$orderQuantity, totalCompleted=$totalCompleted');
+
+      // 같은 발주를 선택한 모든 프린터를 중지
+      for (final printer in selectedPrinters) {
+        if (printer.isPrinterOn == true) {
+          try {
+            await printer.setPrinterState(false);
+            logger.i('프린터 ${printer.id} 자동 중지: 발주 완료');
+          } catch (e) {
+            logger.e('프린터 ${printer.id} 자동 중지 실패: $e');
+          }
+        }
+      }
+
+      // 완료 알림
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('발주 "${order.itemName}" 완료: $totalCompleted/$orderQuantity'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 5),
+          ),
+        );
+      }
+
+      // Isar에서 발주별 데이터 초기화
+      try {
+        final registry = ref.read(fieldValueManagerRegistryProvider);
+        await registry.clearOrderData(orderId);
+        logger.i('발주별 Isar 데이터 초기화 완료: orderId=$orderId');
+      } catch (e) {
+        logger.e('발주별 Isar 데이터 초기화 실패: $e');
+      }
+    }
+  }
+
+  /// 발주 전체 완료 감지 및 데이터 초기화
+  /// 발주의 quantity와 현재 인쇄된 수량을 비교하여 완료 여부 확인
+  @Deprecated('Use _checkAndStopPrintersIfCompleted instead')
+  Future<void> _checkAndClearOrderDataIfCompleted(ManagedPrinter printer) async {
+    final selectedOrder = printer.selectedOrder;
+    if (selectedOrder == null) return;
+
+    try {
+      // 발주의 quantity와 현재 인쇄된 수량 비교
+      final orderQuantity = selectedOrder.quantity;
+      final currentCount = printer.currentPrintCount;
+      final completedWork = printer.completePrintWork ?? 0;
+
+      // 완료 여부 확인 (현재 카운트 또는 완료 수량이 발주 수량과 같거나 초과)
+      final isCompleted = (currentCount >= orderQuantity) || (completedWork >= orderQuantity);
+
+      if (isCompleted) {
+        logger.i(
+            '발주 전체 완료 감지: orderId=${selectedOrder.orderId}, quantity=$orderQuantity, currentCount=$currentCount, completedWork=$completedWork');
+
+        // Isar에서 발주별 데이터 초기화
+        final registry = ref.read(fieldValueManagerRegistryProvider);
+        await registry.clearOrderData(selectedOrder.orderId);
+
+        logger.i('발주별 데이터 초기화 완료: orderId=${selectedOrder.orderId}');
+      }
+    } catch (e, stackTrace) {
+      logger.e('발주 완료 감지 및 데이터 초기화 실패: $e\n$stackTrace');
+    }
   }
 
   @override
@@ -241,6 +435,19 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.buttonBorderRadius),
               ),
+            ),
+          ),
+          SizedBox(width: 8),
+          OutlinedButton.icon(
+            onPressed: () => _clearIsarData(context, ref),
+            icon: Icon(Icons.delete_sweep, size: 16),
+            label: Text('Isar 초기화'),
+            style: OutlinedButton.styleFrom(
+              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.cardBorderRadius),
+              ),
+              foregroundColor: Colors.red,
             ),
           ),
           SizedBox(width: 8),
@@ -622,6 +829,72 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     );
   }
 
+  /// Isar 데이터 초기화
+  Future<void> _clearIsarData(BuildContext context, WidgetRef ref) async {
+    // 확인 다이얼로그 표시
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Isar 데이터 초기화'),
+        content: Text('모든 Isar 데이터를 삭제하시겠습니까?\n\n이 작업은 되돌릴 수 없습니다.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('취소'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: Text('삭제'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      final saver = await ref.read(fieldValueStateSaverProvider.future);
+      await saver.clearAllData();
+
+      // 삭제 확인: 특정 발주/프린터의 카운트가 정말 0인지 확인
+      final printers = ref.read(printerListProvider);
+      for (final printer in printers) {
+        if (printer.id != null && printer.selectedOrder != null) {
+          final testCount = await saver.getPrinterCount(printer.selectedOrder!.orderId, printer.id!);
+          if (testCount > 0) {
+            logger.w('⚠️ 프린터 ${printer.id} 발주 ${printer.selectedOrder!.orderId} 카운트가 여전히 $testCount입니다. 재삭제 시도...');
+            // 재삭제
+            await saver.clearPrinterCountsForOrder(printer.selectedOrder!.orderId);
+            final retryCount = await saver.getPrinterCount(printer.selectedOrder!.orderId, printer.id!);
+            logger.i('재삭제 후 카운트: $retryCount');
+          }
+        }
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('모든 Isar 데이터가 초기화되었습니다'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      logger.e('Isar 데이터 초기화 실패: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Isar 데이터 초기화 실패: $e'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
   /// 프린터 그리드 빌드
   Widget _buildPrinterGrid(List<ManagedPrinter> printers) {
     if (printers.isEmpty) {
@@ -645,7 +918,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
         crossAxisCount: _getCrossAxisCount(context),
         crossAxisSpacing: _PrinterStatusUIConstants.cardSpacing,
         mainAxisSpacing: _PrinterStatusUIConstants.cardSpacing,
-        childAspectRatio: 0.9, // 카드 비율 조정 (약간 더 세로로)
+        childAspectRatio: 0.75, // 카드 비율 조정 (발주 정보 추가로 더 세로로)
       ),
       itemCount: printers.length,
       itemBuilder: (context, index) => _buildPrinterCard(printers[index]),
@@ -669,7 +942,9 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
       listenable: printer,
       builder: (context, child) {
         final statusType = _getPrinterStatusType(printer);
-        final hasOrder = printer.totalPrintWork != null && printer.totalPrintWork! > 0;
+        // 발주가 선택되어 있거나 기존 작업이 있으면 hasOrder = true
+        final hasOrder =
+            (printer.selectedOrder != null) || (printer.totalPrintWork != null && printer.totalPrintWork! > 0);
 
         return Container(
           margin: EdgeInsets.only(bottom: 16),
@@ -696,9 +971,13 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
                       _buildBasicInfo(printer),
                       SizedBox(height: 12),
 
-                      // 품목명
+                      // 품목명 및 선택된 발주 정보
                       _buildItemName(printer),
-                      SizedBox(height: 12),
+                      if (printer.selectedOrder != null) ...[
+                        SizedBox(height: 6),
+                        _buildSelectedOrderInfo(printer.selectedOrder!),
+                      ],
+                      SizedBox(height: 10),
 
                       // 통계 정보
                       _buildStatistics(printer),
@@ -891,6 +1170,66 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     );
   }
 
+  /// 선택된 발주 정보 표시 (Windows 스타일 - 컴팩트 버전)
+  Widget _buildSelectedOrderInfo(OrderItem order) {
+    return Container(
+      padding: EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Color(0xFFE3F2FD), // Windows Blue 배경
+        border: Border.all(color: _PrinterStatusUIConstants.primaryBlue, width: 1),
+        borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.cardBorderRadius),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 헤더와 발주명을 한 줄에
+          Row(
+            children: [
+              Icon(Icons.shopping_cart, size: 16, color: _PrinterStatusUIConstants.primaryBlue),
+              SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  order.itemName,
+                  style: _PrinterStatusUIConstants.textStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[900],
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 6),
+          // 상세 정보를 더 컴팩트하게 (작은 폰트, 한 줄에 여러 정보)
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              _buildCompactOrderInfo('ID', '${order.orderId}'),
+              _buildCompactOrderInfo('수량', '${order.quantity}'),
+              if (order.uniqueCode.isNotEmpty) _buildCompactOrderInfo('코드', order.uniqueCode),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 컴팩트한 발주 정보 아이템
+  Widget _buildCompactOrderInfo(String label, String value) {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(color: Colors.white.withOpacity(0.5), borderRadius: BorderRadius.circular(2)),
+      child: Text(
+        '$label: $value',
+        style: _PrinterStatusUIConstants.textStyle(fontSize: 10, color: Colors.grey[700], fontWeight: FontWeight.w500),
+      ),
+    );
+  }
+
   /// 품목명 섹션
   Widget _buildItemName(ManagedPrinter printer) {
     return Container(
@@ -937,46 +1276,57 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
   }
 
   /// 통계 정보 섹션 (Windows 스타일)
+  /// Consumer를 사용하여 같은 발주를 선택한 다른 프린터들의 카운트 변경도 감지
   Widget _buildStatistics(ManagedPrinter printer) {
-    final totalOrder = printer.totalPrintWork ?? 0;
-    final completed = printer.completePrintWork ?? 0;
-    final currentCount = printer.protocol == PrinterProtocol.zipher ? printer.currentPrintCount : 0;
-    final progress = totalOrder > 0 ? (completed / totalOrder).clamp(0.0, 1.0) : 0.0;
+    // 발주가 선택되어 있으면 선택된 발주의 수량을 사용, 없으면 기존 totalPrintWork 사용
+    final totalOrder = printer.selectedOrder?.quantity ?? printer.totalPrintWork ?? 0;
 
-    return Container(
-      padding: EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.grey[50],
-        border: Border.all(color: Colors.grey[200]!),
-        borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.cardBorderRadius),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '인쇄 현황',
-            style: _PrinterStatusUIConstants.textStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey[700],
-            ),
+    // Consumer로 감싸서 같은 발주를 선택한 다른 프린터들의 카운트 변경도 감지
+    return Consumer(
+      builder: (context, ref, child) {
+        // 발주가 선택된 경우: 같은 발주를 선택한 모든 프린터의 카운트 합산
+        // 발주가 선택되지 않은 경우: 기존 completePrintWork 사용
+        final completed = printer.selectedOrder != null
+            ? _getTotalCompletedCountForOrder(printer.selectedOrder!.orderId)
+            : (printer.completePrintWork ?? 0);
+
+        final progress = totalOrder > 0 ? (completed / totalOrder).clamp(0.0, 1.0) : 0.0;
+
+        // printerListProvider를 watch하여 같은 발주를 선택한 다른 프린터들의 변경도 감지
+        ref.watch(printerListProvider);
+
+        return Container(
+          padding: EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.grey[50],
+            border: Border.all(color: Colors.grey[200]!),
+            borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.cardBorderRadius),
           ),
-          SizedBox(height: 12),
-          // 3열 그리드
-          Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(child: _buildStatBox('총 발주 수량', '$totalOrder', Colors.grey[900]!)),
-              SizedBox(width: 8),
-              Expanded(child: _buildStatBox('완료 수량', '$completed', _PrinterStatusUIConstants.printingColor)),
-              if (printer.protocol == PrinterProtocol.zipher) ...[
-                SizedBox(width: 8),
-                Expanded(child: _buildStatBox('실시간 카운트', '$currentCount', _PrinterStatusUIConstants.onlineColor)),
-              ],
+              Text(
+                '인쇄 현황',
+                style: _PrinterStatusUIConstants.textStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey[700],
+                ),
+              ),
+              SizedBox(height: 12),
+              // 2열 그리드 (실시간 카운트 제거)
+              Row(
+                children: [
+                  Expanded(child: _buildStatBox('발주 수량', '$totalOrder', Colors.grey[900]!)),
+                  SizedBox(width: 8),
+                  Expanded(child: _buildStatBox('완료 수량', '$completed', _PrinterStatusUIConstants.printingColor)),
+                ],
+              ),
+              if (totalOrder > 0) ...[SizedBox(height: 12), _buildProgressBar(progress)],
             ],
           ),
-          if (totalOrder > 0) ...[SizedBox(height: 12), _buildProgressBar(progress)],
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -1065,45 +1415,39 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     final isConnected = printer.connectionStatus == '연결됨';
     final isPrinterOn = printer.isPrinterOn;
 
+    // 발주 선택은 프린터가 준비 상태(isPrinterOn == true)가 아니면 가능 (오프라인이어도 상관없음)
+    final canSelectOrder = isPrinterOn != true;
+
     return Row(
       children: [
-        // 발주/출고 버튼
+        // 발주 선택 버튼 (항상 표시, 중지 상태일 때만 활성화)
         Expanded(
-          child:
-              hasOrder
-                  ? _buildActionButton(
-                    label: '출고하기',
-                    icon: Icons.local_shipping,
-                    color: _PrinterStatusUIConstants.onlineColor,
-                    onPressed: () => _handleShipment(printer),
-                  )
-                  : _buildActionButton(
-                    label: '발주선택',
-                    icon: Icons.add_shopping_cart,
-                    color: Colors.blue,
-                    onPressed: () => _handleOrder(printer),
-                  ),
+          child: _buildActionButton(
+            label: printer.selectedOrder != null ? '발주 변경' : '발주선택',
+            icon: Icons.add_shopping_cart,
+            color: Colors.blue,
+            onPressed: canSelectOrder ? () => _handleOrder(printer) : null,
+          ),
         ),
         SizedBox(width: 8),
 
         // 준비/정지 버튼
         Expanded(
-          child:
-              isConnected
-                  ? (isPrinterOn == true
-                      ? _buildActionButton(
-                        label: '정지',
-                        icon: Icons.pause,
-                        color: _PrinterStatusUIConstants.offlineColor,
-                        onPressed: () => _handleTogglePrinter(printer, isConnected),
-                      )
-                      : _buildActionButton(
-                        label: '준비',
-                        icon: Icons.play_arrow,
-                        color: _PrinterStatusUIConstants.onlineColor,
-                        onPressed: () => _handleTogglePrinter(printer, isConnected),
-                      ))
-                  : _buildActionButton(label: '연결 필요', icon: Icons.play_arrow, color: Colors.grey, onPressed: null),
+          child: isConnected
+              ? (isPrinterOn == true
+                  ? _buildActionButton(
+                      label: '정지',
+                      icon: Icons.pause,
+                      color: _PrinterStatusUIConstants.offlineColor,
+                      onPressed: () => _handleTogglePrinter(printer, isConnected),
+                    )
+                  : _buildActionButton(
+                      label: '준비',
+                      icon: Icons.play_arrow,
+                      color: _PrinterStatusUIConstants.onlineColor,
+                      onPressed: () => _handleTogglePrinter(printer, isConnected),
+                    ))
+              : _buildActionButton(label: '연결 필요', icon: Icons.play_arrow, color: Colors.grey, onPressed: null),
         ),
       ],
     );
@@ -1161,14 +1505,134 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
 
   /// 발주하기 처리
   Future<void> _handleOrder(ManagedPrinter printer) async {
-    // TODO: 발주 다이얼로그 표시
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('발주 기능은 구현 예정입니다')));
+    await _showOrderSelectionDialog(printer);
   }
 
-  /// 출고하기 처리
-  Future<void> _handleShipment(ManagedPrinter printer) async {
-    // TODO: 출고 다이얼로그 표시
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('출고 기능은 구현 예정입니다')));
+  /// 발주 선택 시 FieldValueManager 초기화 및 복원
+  Future<void> _initializeFieldValueManagerForOrder(ManagedPrinter printer, OrderItem order) async {
+    try {
+      final registry = ref.read(fieldValueManagerRegistryProvider);
+      final startCode = int.tryParse(order.startCode) ?? 1;
+      final endCode = int.tryParse(order.endCode) ?? 1000000;
+
+      // 같은 발주를 선택한 모든 프린터의 카운트 합산 (현재 총 카운트)
+      final currentTotalCount = _getTotalCompletedCountForOrder(order.orderId);
+
+      // 발주별 FieldValueManager 가져오기 또는 생성 (Isar에서 데이터 복원 포함)
+      // 카운트를 전달하여 nextAvailableValue를 동기화
+      final manager = await registry.getOrCreateManager(
+        order.orderId,
+        startCode: startCode,
+        endCode: endCode,
+        uniqueCode: order.uniqueCode,
+        currentTotalCount: currentTotalCount,
+      );
+
+      // 프린터에 필드 값 요청 콜백 설정
+      if (printer.id != null) {
+        final printerId = printer.id!;
+        printer.setFieldValueRequestCallback(() async {
+          return manager.requestFormattedFieldValue(printerId);
+        });
+
+        // Isar에서 발주별 프린터 카운트 복원
+        // 주의: setSelectedOrder가 먼저 호출되어 기준점이 설정된 후에 복원해야 함
+        try {
+          final saver = await ref.read(fieldValueStateSaverProvider.future);
+          final savedCount = await saver.getPrinterCount(order.orderId, printerId);
+
+          logger.i('🔍 Isar에서 발주별 프린터 카운트 조회: orderId=${order.orderId}, printerId=$printerId, savedCount=$savedCount');
+
+          // 복원된 카운트가 있고, 기준점이 이미 설정되어 있으면 복원 (setOrderCount에서 검증 수행)
+          if (savedCount > 0) {
+            // 기준점이 설정되어 있는지 확인
+            final baseline = printer.getOrderBaseline(order.orderId);
+            if (baseline != null) {
+              printer.setOrderCount(order.orderId, savedCount);
+              logger.i(
+                  '발주별 프린터 카운트 복원 시도: orderId=${order.orderId}, printerId=$printerId, count=$savedCount, 기준점=$baseline');
+            } else {
+              logger.w('발주별 프린터 카운트 복원 스킵: orderId=${order.orderId}, printerId=$printerId, 기준점이 설정되지 않음');
+            }
+          } else {
+            logger.d('발주별 프린터 카운트 없음: orderId=${order.orderId}, printerId=$printerId');
+          }
+        } catch (e) {
+          logger.e('발주별 프린터 카운트 복원 실패: $e');
+        }
+      }
+
+      logger.i('발주별 FieldValueManager 초기화 및 복원 완료: orderId=${order.orderId}, printerId=${printer.id}');
+    } catch (e, stackTrace) {
+      logger.e('발주별 FieldValueManager 초기화 실패: $e\n$stackTrace');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('발주 데이터 복원 실패: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  /// 발주 선택 다이얼로그 표시
+  Future<void> _showOrderSelectionDialog(ManagedPrinter printer) async {
+    // 프린터가 준비 상태가 아닌지 확인 (오프라인이어도 상관없음)
+    final isPrinterOn = printer.isPrinterOn;
+
+    if (isPrinterOn == true) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('프린터가 실행 중입니다. 발주를 선택하려면 먼저 프린터를 정지하세요.'), backgroundColor: Colors.orange));
+      return;
+    }
+
+    final orders = ref.read(orderListProvider);
+
+    // 수령완료 상태인 주문만 필터링 (상태 코드 '4': 인쇄/가공 중)
+    final availableOrders = orders.where((order) => order.status == '4').toList();
+
+    if (availableOrders.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('선택 가능한 발주가 없습니다. 수령완료된 주문이 필요합니다.'), backgroundColor: Colors.orange));
+      return;
+    }
+
+    final selectedOrder = await showDialog<OrderItem>(
+      context: context,
+      builder: (context) => _OrderSelectionDialog(orders: availableOrders, currentSelectedOrder: printer.selectedOrder),
+    );
+
+    if (selectedOrder != null) {
+      final wasAlreadySelected = printer.selectedOrder?.orderId == selectedOrder.orderId;
+
+      // 발주 선택 시 먼저 발주를 설정 (카운트 초기화)
+      printer.setSelectedOrder(selectedOrder);
+
+      // 발주 선택 시 Isar에 마지막 선택 발주 저장
+      if (printer.id != null) {
+        try {
+          final saver = await ref.read(fieldValueStateSaverProvider.future);
+          saver.savePrinterLastOrderImmediately(
+            printerId: printer.id!,
+            orderId: selectedOrder.orderId,
+          );
+        } catch (e) {
+          logger.e('프린터 마지막 발주 저장 실패: $e');
+        }
+      }
+
+      // 발주 선택 시 Isar에서 데이터 복원 및 FieldValueManager 초기화
+      // setSelectedOrder가 먼저 호출되어 카운트가 0으로 초기화된 후 복원
+      await _initializeFieldValueManagerForOrder(printer, selectedOrder);
+
+      if (wasAlreadySelected) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('발주가 선택되었습니다: ${selectedOrder.itemName}'), backgroundColor: Colors.green),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('발주가 변경되었습니다: ${selectedOrder.itemName}'), backgroundColor: Colors.green),
+        );
+      }
+    }
   }
 
   /// 프린터 On/Off 토글
@@ -1202,25 +1666,24 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
   Future<void> _handleRemovePrinter(ManagedPrinter printer) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder:
-          (context) => AlertDialog(
-            title: Text(
-              '프린터 제거',
-              style: _PrinterStatusUIConstants.textStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            content: Text('${printer.name} 프린터를 제거하시겠습니까?', style: _PrinterStatusUIConstants.textStyle()),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: Text('취소', style: _PrinterStatusUIConstants.textStyle()),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                style: TextButton.styleFrom(foregroundColor: _PrinterStatusUIConstants.errorColor),
-                child: Text('제거', style: _PrinterStatusUIConstants.textStyle()),
-              ),
-            ],
+      builder: (context) => AlertDialog(
+        title: Text(
+          '프린터 제거',
+          style: _PrinterStatusUIConstants.textStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        content: Text('${printer.name} 프린터를 제거하시겠습니까?', style: _PrinterStatusUIConstants.textStyle()),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('취소', style: _PrinterStatusUIConstants.textStyle()),
           ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: _PrinterStatusUIConstants.errorColor),
+            child: Text('제거', style: _PrinterStatusUIConstants.textStyle()),
+          ),
+        ],
+      ),
     );
 
     if (confirmed == true) {
@@ -1251,45 +1714,43 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
       barrierDismissible: false,
       builder: (context) {
         return StatefulBuilder(
-          builder:
-              (context, setState) => Stack(
-                children: [
-                  AlertDialog(
-                    title: Text(
-                      '프린터 추가하기',
-                      style: _PrinterStatusUIConstants.textStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                    content: _buildAddPrinterForm(nameController, ipController, portController),
-                    actions: [
-                      TextButton(
-                        onPressed: isLoading ? null : () => Navigator.pop(context),
-                        child: Text('취소', style: _PrinterStatusUIConstants.textStyle()),
-                      ),
-                      ElevatedButton(
-                        onPressed:
-                            isLoading
-                                ? null
-                                : () => _handleAddPrinter(
-                                  context,
-                                  ref,
-                                  nameController,
-                                  ipController,
-                                  portController,
-                                  (loading) => setState(() => isLoading = loading),
-                                ),
-                        child: Text('추가하기', style: _PrinterStatusUIConstants.textStyle()),
-                      ),
-                    ],
+          builder: (context, setState) => Stack(
+            children: [
+              AlertDialog(
+                title: Text(
+                  '프린터 추가하기',
+                  style: _PrinterStatusUIConstants.textStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                content: _buildAddPrinterForm(nameController, ipController, portController),
+                actions: [
+                  TextButton(
+                    onPressed: isLoading ? null : () => Navigator.pop(context),
+                    child: Text('취소', style: _PrinterStatusUIConstants.textStyle()),
                   ),
-                  if (isLoading)
-                    Positioned.fill(
-                      child: Container(
-                        color: _PrinterStatusUIConstants.cardShadow,
-                        child: Center(child: CircularProgressIndicator()),
-                      ),
-                    ),
+                  ElevatedButton(
+                    onPressed: isLoading
+                        ? null
+                        : () => _handleAddPrinter(
+                              context,
+                              ref,
+                              nameController,
+                              ipController,
+                              portController,
+                              (loading) => setState(() => isLoading = loading),
+                            ),
+                    child: Text('추가하기', style: _PrinterStatusUIConstants.textStyle()),
+                  ),
                 ],
               ),
+              if (isLoading)
+                Positioned.fill(
+                  child: Container(
+                    color: _PrinterStatusUIConstants.cardShadow,
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+                ),
+            ],
+          ),
         );
       },
     );
@@ -1382,5 +1843,261 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     final response = await printerRepository.addPrinter(request);
     logger.i("response: $response");
     printer.updateFields(id: response.data.processingCompanyPrinterIndex);
+  }
+}
+
+/// 발주 선택 다이얼로그
+class _OrderSelectionDialog extends StatefulWidget {
+  final List<OrderItem> orders;
+  final OrderItem? currentSelectedOrder;
+
+  const _OrderSelectionDialog({required this.orders, this.currentSelectedOrder});
+
+  @override
+  State<_OrderSelectionDialog> createState() => _OrderSelectionDialogState();
+}
+
+class _OrderSelectionDialogState extends State<_OrderSelectionDialog> {
+  OrderItem? _selectedOrder;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedOrder = widget.currentSelectedOrder;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      child: Container(
+        width: 600,
+        constraints: BoxConstraints(maxHeight: 600),
+        decoration: BoxDecoration(
+          color: _PrinterStatusUIConstants.cardBg,
+          border: Border.all(color: _PrinterStatusUIConstants.borderColor, width: 1),
+          borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.cardBorderRadius),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 8, offset: Offset(0, 4))],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Windows 스타일 헤더 (그라데이션)
+            Container(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [_PrinterStatusUIConstants.windowTitleBarStart, _PrinterStatusUIConstants.windowTitleBarEnd],
+                  begin: Alignment.topLeft,
+                  end: Alignment.topRight,
+                ),
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(_PrinterStatusUIConstants.cardBorderRadius),
+                  topRight: Radius.circular(_PrinterStatusUIConstants.cardBorderRadius),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.shopping_cart, color: Colors.white, size: 20),
+                  SizedBox(width: 8),
+                  Text(
+                    '발주 선택',
+                    style: _PrinterStatusUIConstants.textStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  Spacer(),
+                  IconButton(
+                    icon: Icon(Icons.close, color: Colors.white, size: 18),
+                    onPressed: () => Navigator.pop(context),
+                    padding: EdgeInsets.zero,
+                    constraints: BoxConstraints(),
+                  ),
+                ],
+              ),
+            ),
+            // 본문
+            Flexible(
+              child: Container(
+                padding: EdgeInsets.all(16),
+                child: widget.orders.isEmpty
+                    ? Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(32),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.inbox_outlined, size: 48, color: Colors.grey[400]),
+                              SizedBox(height: 16),
+                              Text(
+                                '선택 가능한 발주가 없습니다.',
+                                style: _PrinterStatusUIConstants.textStyle(fontSize: 14, color: Colors.grey[600]),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    : ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: widget.orders.length,
+                        itemBuilder: (context, index) {
+                          final order = widget.orders[index];
+                          final isSelected = _selectedOrder?.orderId == order.orderId;
+
+                          return InkWell(
+                            onTap: () {
+                              setState(() {
+                                _selectedOrder = order;
+                              });
+                            },
+                            child: Container(
+                              margin: EdgeInsets.only(bottom: 8),
+                              padding: EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? Color(0xFFE3F2FD) // Windows Blue 배경
+                                    : _PrinterStatusUIConstants.toolbarBg,
+                                border: Border.all(
+                                  color: isSelected
+                                      ? _PrinterStatusUIConstants.primaryBlue
+                                      : _PrinterStatusUIConstants.borderColor,
+                                  width: isSelected ? 2 : 1,
+                                ),
+                                borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.cardBorderRadius),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      if (isSelected)
+                                        Icon(
+                                          Icons.check_circle,
+                                          color: _PrinterStatusUIConstants.primaryBlue,
+                                          size: 20,
+                                        )
+                                      else
+                                        Icon(Icons.radio_button_unchecked, color: Colors.grey[600], size: 20),
+                                      SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          order.itemName,
+                                          style: _PrinterStatusUIConstants.textStyle(
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.bold,
+                                            color:
+                                                isSelected ? _PrinterStatusUIConstants.primaryBlue : Colors.grey[900],
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      Expanded(child: _buildOrderInfoRow('주문 ID', '${order.orderId}')),
+                                      Expanded(child: _buildOrderInfoRow('수량', '${order.quantity}')),
+                                    ],
+                                  ),
+                                  SizedBox(height: 4),
+                                  Row(
+                                    children: [
+                                      Expanded(child: _buildOrderInfoRow('기관명', order.institutionName)),
+                                      Expanded(child: _buildOrderInfoRow('등록일', order.regDate)),
+                                    ],
+                                  ),
+                                  if (order.uniqueCode.isNotEmpty) ...[
+                                    SizedBox(height: 4),
+                                    _buildOrderInfoRow('고유 코드', order.uniqueCode),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ),
+            // Windows 스타일 푸터 (버튼 영역)
+            Container(
+              padding: EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: _PrinterStatusUIConstants.toolbarBg,
+                border: Border(top: BorderSide(color: _PrinterStatusUIConstants.borderColor, width: 1)),
+                borderRadius: BorderRadius.only(
+                  bottomLeft: Radius.circular(_PrinterStatusUIConstants.cardBorderRadius),
+                  bottomRight: Radius.circular(_PrinterStatusUIConstants.cardBorderRadius),
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  OutlinedButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: OutlinedButton.styleFrom(
+                      padding: EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                      side: BorderSide(color: _PrinterStatusUIConstants.borderColor),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.buttonBorderRadius),
+                      ),
+                    ),
+                    child: Text(
+                      '취소',
+                      style: _PrinterStatusUIConstants.textStyle(
+                        fontSize: 14,
+                        color: Colors.grey[700],
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: _selectedOrder != null ? () => Navigator.pop(context, _selectedOrder) : null,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor:
+                          _selectedOrder != null ? _PrinterStatusUIConstants.primaryBlue : Colors.grey[400],
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.buttonBorderRadius),
+                      ),
+                      elevation: _selectedOrder != null ? 1 : 0,
+                    ),
+                    child: Text(
+                      '선택',
+                      style: _PrinterStatusUIConstants.textStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOrderInfoRow(String label, String value) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$label: ',
+            style: _PrinterStatusUIConstants.textStyle(
+              fontSize: 12,
+              color: Colors.grey[600],
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          Expanded(
+            child: Text(value, style: _PrinterStatusUIConstants.textStyle(fontSize: 12, color: Colors.grey[900])),
+          ),
+        ],
+      ),
+    );
   }
 }
