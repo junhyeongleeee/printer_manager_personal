@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../domain/entities/order_item.dart';
-import 'package:print_manager/data/models/response/order_response.dart';
-import 'package:print_manager/data/mappers/order_response_data_mapper.dart';
+import '../../core/domain/entities/order_item.dart';
+import 'package:print_manager/core/data/models/response/order_response.dart';
+import 'package:print_manager/core/data/mappers/order_response_data_mapper.dart';
 import 'package:collection/collection.dart';
 import 'package:print_manager/core/services/logger_service.dart';
 

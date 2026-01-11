@@ -3,11 +3,11 @@ import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:print_manager/core/services/logger_service.dart';
 import '../providers/user_provider.dart';
-import 'package:print_manager/data/models/request/login_request.dart';
-import 'package:print_manager/data/repositories/user_repository_provider.dart';
-import 'package:print_manager/data/providers/token_provider.dart';
+import 'package:print_manager/core/data/models/request/login_request.dart';
+import 'package:print_manager/core/data/repositories/user_repository_provider.dart';
+import 'package:print_manager/core/data/providers/token_provider.dart';
 import 'package:print_manager/core/token.dart';
-import 'package:print_manager/domain/entities/user.dart';
+import 'package:print_manager/core/domain/entities/user.dart';
 
 class LoginPage extends ConsumerStatefulWidget {
   const LoginPage({super.key});

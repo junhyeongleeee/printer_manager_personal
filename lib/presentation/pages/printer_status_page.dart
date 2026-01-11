@@ -4,10 +4,10 @@ import '../providers/printer_list_provider.dart';
 import '../providers/order_list_provider.dart';
 import '../providers/field_value_manager_registry_provider.dart';
 import '../providers/field_value_state_saver_provider.dart';
-import '../../domain/entities/managed_printer.dart';
-import '../../domain/entities/order_item.dart';
-import 'package:print_manager/data/models/request/printers_request.dart';
-import 'package:print_manager/data/repositories/printer_repository_provider.dart';
+import '../../core/domain/entities/managed_printer.dart';
+import '../../core/domain/entities/order_item.dart';
+import 'package:print_manager/core/data/models/request/printers_request.dart';
+import 'package:print_manager/core/data/repositories/printer_repository_provider.dart';
 import 'package:print_manager/core/services/logger_service.dart';
 
 class PrinterStatusPage extends ConsumerStatefulWidget {

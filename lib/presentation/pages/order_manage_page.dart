@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:print_manager/data/models/request/warehouse_request.dart';
-import '../../domain/entities/managed_printer.dart';
+import 'package:print_manager/core/data/models/request/warehouse_request.dart';
+import '../../core/domain/entities/managed_printer.dart';
 import '../providers/order_list_provider.dart';
 import '../providers/printer_list_provider.dart';
-import 'package:print_manager/data/repositories/order_repository_provider.dart';
-import 'package:print_manager/data/models/request/patch_order_request.dart';
-import 'package:print_manager/data/repositories/printer_repository_provider.dart';
-import 'package:print_manager/data/models/request/printerjob_request.dart';
+import 'package:print_manager/core/data/repositories/order_repository_provider.dart';
+import 'package:print_manager/core/data/models/request/patch_order_request.dart';
+import 'package:print_manager/core/data/repositories/printer_repository_provider.dart';
+import 'package:print_manager/core/data/models/request/printerjob_request.dart';
 import 'package:print_manager/presentation/providers/prototype_printer_provider.dart';
 import 'package:print_manager/core/services/logger_service.dart';
 

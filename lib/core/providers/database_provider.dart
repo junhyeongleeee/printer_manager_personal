@@ -1,5 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:print_manager/data/datasources/local/database_helper.dart';
+import 'package:print_manager/core/data/datasources/local/database_helper.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 

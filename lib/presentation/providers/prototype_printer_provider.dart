@@ -1,11 +1,11 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:print_manager/data/repositories/printer_repository_provider.dart';
-import 'package:print_manager/domain/entities/managed_printer.dart';
-import 'package:print_manager/domain/entities/order_item.dart';
-import 'package:print_manager/domain/entities/managed_printer.dart';
-import 'package:print_manager/infra/zipher_socket.dart';
-import 'package:print_manager/domain/repositories/order_repository.dart';
-import 'package:print_manager/domain/repositories/printer_repository.dart';
+import 'package:print_manager/core/data/repositories/printer_repository_provider.dart';
+import 'package:print_manager/core/domain/entities/managed_printer.dart';
+import 'package:print_manager/core/domain/entities/order_item.dart';
+import 'package:print_manager/core/domain/entities/managed_printer.dart';
+import 'package:print_manager/core/infra/zipher_socket.dart';
+import 'package:print_manager/core/domain/repositories/order_repository.dart';
+import 'package:print_manager/core/domain/repositories/printer_repository.dart';
 import 'package:print_manager/presentation/providers/printer_list_provider.dart';
 import 'package:print_manager/core/services/logger_service.dart';
 

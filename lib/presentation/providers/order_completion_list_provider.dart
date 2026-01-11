@@ -1,5 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../domain/entities/order_completion_item.dart';
+import '../../core/domain/entities/order_completion_item.dart';
 
 final orderCompletionListProvider = StateNotifierProvider<OrderCompletionListNotifier, List<OrderCompletionItem>>((ref) {
   return OrderCompletionListNotifier();

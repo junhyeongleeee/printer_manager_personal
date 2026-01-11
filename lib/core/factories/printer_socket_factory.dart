@@ -1,7 +1,7 @@
 import 'package:print_manager/core/enums/printer_protocol.dart';
 import 'package:print_manager/core/interfaces/printer_socket.dart';
-import 'package:print_manager/infra/zipher_socket.dart';
-import 'package:print_manager/infra/ngpcl_socket.dart';
+import 'package:print_manager/core/infra/zipher_socket.dart';
+import 'package:print_manager/core/infra/ngpcl_socket.dart';
 
 /// 프린터 소켓 팩토리
 /// 프로토콜 타입에 따라 적절한 소켓 구현체를 생성합니다.

@@ -1,5 +1,5 @@
 import 'package:go_router/go_router.dart';
-import 'package:print_manager/infra/zipher_socket.dart';
+import 'package:print_manager/core/infra/zipher_socket.dart';
 import 'package:print_manager/presentation/pages/printer_manager_home_page.dart';
 import 'package:print_manager/presentation/pages/login_page.dart';
 import 'package:print_manager/presentation/pages/company_register_page.dart';

@@ -1,5 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:print_manager/domain/entities/user.dart';
+import 'package:print_manager/core/domain/entities/user.dart';
 
 final userProvider = StateNotifierProvider<UserNotifier, User?>((ref) {
   return UserNotifier();

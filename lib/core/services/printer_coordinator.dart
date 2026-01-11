@@ -1,4 +1,4 @@
-import 'package:print_manager/domain/entities/managed_printer.dart';
+import 'package:print_manager/core/domain/entities/managed_printer.dart';
 import 'package:print_manager/core/services/logger_service.dart';
 
 /// 여러 프린터를 동시에 제어하는 코디네이터

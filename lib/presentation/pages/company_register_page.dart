@@ -4,9 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:print_manager/core/providers/database_provider.dart';
 import '../providers/user_provider.dart';
 import '../../core/providers/database_provider.dart';
-import 'package:print_manager/domain/entities/user.dart';
-import 'package:print_manager/data/models/request/user_request.dart';
-import 'package:print_manager/data/repositories/user_repository_provider.dart';
+import 'package:print_manager/core/domain/entities/user.dart';
+import 'package:print_manager/core/data/models/request/user_request.dart';
+import 'package:print_manager/core/data/repositories/user_repository_provider.dart';
 import 'package:print_manager/core/services/logger_service.dart';
 
 class CompanyRegisterPage extends ConsumerStatefulWidget {

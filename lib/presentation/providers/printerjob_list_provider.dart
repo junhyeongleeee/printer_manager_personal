@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../domain/entities/printerjob_item.dart';
-import 'package:print_manager/data/models/response/printerjob_list_response.dart';
-import 'package:print_manager/data/mappers/printerjob_data_mapper.dart';
+import '../../core/domain/entities/printerjob_item.dart';
+import 'package:print_manager/core/data/models/response/printerjob_list_response.dart';
+import 'package:print_manager/core/data/mappers/printerjob_data_mapper.dart';
 import 'package:collection/collection.dart';
 import 'package:print_manager/core/services/logger_service.dart';
 

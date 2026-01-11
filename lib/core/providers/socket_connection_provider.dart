@@ -1,7 +1,7 @@
 // socket_connection_provider.dart
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 //import 'package:print_manager/core/zipher_socket.dart';
-import 'package:print_manager/data/zipher_commands.dart';
+import 'package:print_manager/core/data/zipher_commands.dart';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:convert';

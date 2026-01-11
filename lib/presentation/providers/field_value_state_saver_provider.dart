@@ -1,10 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:isar/isar.dart';
 import 'package:print_manager/core/providers/isar_provider.dart';
-import 'package:print_manager/data/models/order_field_value_state.dart';
-import 'package:print_manager/data/models/order_field_value_metadata.dart';
-import 'package:print_manager/data/models/order_printer_count.dart';
-import 'package:print_manager/data/models/printer_last_order.dart';
+import 'package:print_manager/core/data/models/order_field_value_state.dart';
+import 'package:print_manager/core/data/models/order_field_value_metadata.dart';
+import 'package:print_manager/core/data/models/order_printer_count.dart';
+import 'package:print_manager/core/data/models/printer_last_order.dart';
 import 'package:print_manager/core/services/logger_service.dart';
 
 /// FieldValueStateSaver Provider

@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:meta/meta.dart';
 import 'package:print_manager/core/services/logger_service.dart';
 import 'package:print_manager/presentation/providers/field_value_state_saver_provider.dart';
-import 'package:print_manager/data/models/order_field_value_state.dart';
+import 'package:print_manager/core/data/models/order_field_value_state.dart';
 
 /// 필드 값 상태
 enum FieldValueStatus {

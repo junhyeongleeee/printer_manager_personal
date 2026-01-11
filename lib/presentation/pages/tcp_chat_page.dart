@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:print_manager/infra/zipher_socket.dart';
-import 'package:print_manager/domain/usecases/print_job_usecase.dart';
+import 'package:print_manager/core/infra/zipher_socket.dart';
+import 'package:print_manager/core/domain/usecases/print_job_usecase.dart';
 
 
 class TcpChatPage extends ConsumerStatefulWidget {

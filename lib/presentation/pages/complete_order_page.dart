@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/printerjob_list_provider.dart';
-import 'package:print_manager/data/repositories/printer_repository_provider.dart';
+import 'package:print_manager/core/data/repositories/printer_repository_provider.dart';
 
 /// UI 상수 (Windows UI 스타일)
 class _UIConstants {
