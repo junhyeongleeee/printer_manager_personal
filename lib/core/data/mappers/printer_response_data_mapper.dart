@@ -1,7 +1,7 @@
 import 'package:print_manager/core/domain/entities/managed_printer.dart';
 import 'package:print_manager/core/data/models/response/printer_list_response.dart';
-import 'package:print_manager/core/enums/printer_protocol.dart';
-import 'package:print_manager/core/factories/printer_socket_factory.dart';
+import 'package:print_manager/core/domain/printer_protocol.dart';
+import 'package:print_manager/core/domain/printer_socket_factory.dart';
 
 extension PrinterResponseDataMapper on PrinterData {
   ManagedPrinter toManagedPrinter() {

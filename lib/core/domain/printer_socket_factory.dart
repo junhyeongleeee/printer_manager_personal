@@ -1,5 +1,5 @@
-import 'package:print_manager/core/enums/printer_protocol.dart';
-import 'package:print_manager/core/interfaces/printer_socket.dart';
+import 'package:print_manager/core/domain/printer_protocol.dart';
+import 'package:print_manager/core/domain/printer_socket.dart';
 import 'package:print_manager/core/infra/zipher_socket.dart';
 import 'package:print_manager/core/infra/ngpcl_socket.dart';
 

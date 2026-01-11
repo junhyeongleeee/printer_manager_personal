@@ -4,7 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:print_manager/core/data/zipher_commands.dart';
-import 'package:print_manager/core/interfaces/printer_socket.dart';
+import 'package:print_manager/core/domain/printer_socket.dart';
 import 'package:print_manager/core/services/logger_service.dart';
 
 class ZipherSocket implements PrinterSocket {

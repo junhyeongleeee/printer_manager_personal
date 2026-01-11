@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:print_manager/core/interfaces/printer_socket.dart';
+import 'package:print_manager/core/domain/printer_socket.dart';
 import 'package:print_manager/core/services/logger_service.dart';
 import 'package:print_manager/core/data/ngpcl_commands.dart';
 
