@@ -8,6 +8,10 @@ class OrderPrinterCount {
   /// 자동 증가 ID
   Id id = Isar.autoIncrement;
 
+  /// 유저 ID (인덱스, 유저별 데이터 구분)
+  @Index()
+  late String userId;
+
   /// 발주 ID (인덱스)
   @Index()
   late int orderId;

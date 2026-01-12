@@ -8,8 +8,12 @@ class PrinterLastOrder {
   /// 자동 증가 ID
   Id id = Isar.autoIncrement;
 
-  /// 프린터 ID (인덱스, 유니크)
-  @Index(unique: true)
+  /// 유저 ID (인덱스, 유저별 데이터 구분)
+  @Index()
+  late String userId;
+
+  /// 프린터 ID (인덱스, 유저별로 유니크)
+  @Index(composite: [CompositeIndex('userId')])
   late int printerId;
 
   /// 마지막으로 선택한 발주 ID

@@ -4,6 +4,7 @@ import '../providers/printer_list_provider.dart';
 import '../providers/order_list_provider.dart';
 import '../providers/field_value_manager_registry_provider.dart';
 import '../providers/field_value_state_saver_provider.dart';
+import '../widgets/common_alert_dialog.dart';
 import '../../core/domain/entities/managed_printer.dart';
 import '../../core/domain/entities/order_item.dart';
 import 'package:print_manager/core/data/models/request/printers_request.dart';
@@ -858,23 +859,13 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
   /// Isar 데이터 초기화
   Future<void> _clearIsarData(BuildContext context, WidgetRef ref) async {
     // 확인 다이얼로그 표시
-    final confirmed = await showDialog<bool>(
+    final confirmed = await CommonAlert.showConfirmDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Isar 데이터 초기화'),
-        content: Text('모든 Isar 데이터를 삭제하시겠습니까?\n\n이 작업은 되돌릴 수 없습니다.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('취소'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: Text('삭제'),
-          ),
-        ],
-      ),
+      title: 'Isar 데이터 초기화',
+      content: '모든 Isar 데이터를 삭제하시겠습니까?\n\n이 작업은 되돌릴 수 없습니다.',
+      confirmText: '삭제',
+      cancelText: '취소',
+      confirmColor: Colors.red,
     );
 
     if (confirmed != true) return;
@@ -921,7 +912,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     }
   }
 
-  /// 프린터 그리드 빌드
+  /// 프린터 그리드 빌드 (발주별로 그룹화)
   Widget _buildPrinterGrid(List<ManagedPrinter> printers) {
     if (printers.isEmpty) {
       return Center(
@@ -936,18 +927,115 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
       );
     }
 
-    return GridView.builder(
-      shrinkWrap: true, // SingleChildScrollView 안에서 사용하기 위해 필요
-      physics: NeverScrollableScrollPhysics(), // 부모의 스크롤을 사용
-      padding: EdgeInsets.all(_PrinterStatusUIConstants.cardSpacing),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: _getCrossAxisCount(context),
-        crossAxisSpacing: _PrinterStatusUIConstants.cardSpacing,
-        mainAxisSpacing: _PrinterStatusUIConstants.cardSpacing,
-        childAspectRatio: 0.75, // 카드 비율 조정 (발주 정보 추가로 더 세로로)
-      ),
-      itemCount: printers.length,
-      itemBuilder: (context, index) => _buildPrinterCard(printers[index]),
+    // 발주별로 프린터 그룹화
+    final printersByOrder = <int?, List<ManagedPrinter>>{};
+    for (final printer in printers) {
+      final orderId = printer.selectedOrder?.orderId;
+      if (!printersByOrder.containsKey(orderId)) {
+        printersByOrder[orderId] = [];
+      }
+      printersByOrder[orderId]!.add(printer);
+    }
+
+    // 발주 ID로 정렬 (null은 마지막에)
+    final sortedOrders = printersByOrder.keys.toList()
+      ..sort((a, b) {
+        if (a == null) return 1;
+        if (b == null) return -1;
+        return a.compareTo(b);
+      });
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final orderId in sortedOrders) ...[
+          _buildOrderSection(orderId, printersByOrder[orderId]!),
+          SizedBox(height: 16),
+        ],
+      ],
+    );
+  }
+
+  /// 발주별 섹션 빌드
+  Widget _buildOrderSection(int? orderId, List<ManagedPrinter> printers) {
+    final orders = ref.read(orderListProvider);
+    final order = orderId != null ? orders.firstWhere((o) => o.orderId == orderId, orElse: () => orders.first) : null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 발주 헤더
+        Container(
+          margin: EdgeInsets.fromLTRB(16, 0, 16, 12),
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: orderId != null ? Colors.blue[50] : Colors.grey[200],
+            border: Border.all(
+              color: orderId != null ? Colors.blue[300]! : Colors.grey[400]!,
+              width: 1,
+            ),
+            borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.cardBorderRadius),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                orderId != null ? Icons.shopping_cart : Icons.print_disabled,
+                size: 18,
+                color: orderId != null ? Colors.blue[700] : Colors.grey[600],
+              ),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  orderId != null
+                      ? '발주 ${orderId}: ${order?.itemName ?? "알 수 없음"} (${printers.length}개 프린터)'
+                      : '발주 미선택 (${printers.length}개 프린터)',
+                  style: _PrinterStatusUIConstants.textStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: orderId != null ? Colors.blue[900] : Colors.grey[700],
+                  ),
+                ),
+              ),
+              if (orderId != null) ...[
+                Consumer(
+                  builder: (context, ref, child) {
+                    final completedCount = _getTotalCompletedCountForOrder(orderId);
+                    final orderQuantity = order?.quantity ?? 0;
+                    return Text(
+                      '완료: $completedCount${orderQuantity > 0 ? '/$orderQuantity' : ''}장',
+                      style: _PrinterStatusUIConstants.textStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey[700],
+                      ),
+                    );
+                  },
+                ),
+                SizedBox(width: 12),
+                // 일괄 중지/준비 버튼
+                _buildBatchControlButtons(orderId, printers),
+                SizedBox(width: 6),
+                // 인쇄 완료 버튼
+                _buildCompletePrintButton(orderId, printers),
+              ],
+            ],
+          ),
+        ),
+        // 프린터 그리드
+        GridView.builder(
+          shrinkWrap: true,
+          physics: NeverScrollableScrollPhysics(),
+          padding: EdgeInsets.symmetric(horizontal: _PrinterStatusUIConstants.cardSpacing),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: _getCrossAxisCount(context),
+            crossAxisSpacing: _PrinterStatusUIConstants.cardSpacing,
+            mainAxisSpacing: _PrinterStatusUIConstants.cardSpacing,
+            childAspectRatio: 0.75,
+          ),
+          itemCount: printers.length,
+          itemBuilder: (context, index) => _buildPrinterCard(printers[index]),
+        ),
+      ],
     );
   }
 
@@ -1661,6 +1749,9 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
       // setSelectedOrder가 먼저 호출되어 카운트가 0으로 초기화된 후 복원
       await _initializeFieldValueManagerForOrder(printer, selectedOrder);
 
+      // UI 업데이트 (발주별 그룹화를 위해 필요)
+      setState(() {});
+
       if (wasAlreadySelected) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('발주가 선택되었습니다: ${selectedOrder.itemName}'), backgroundColor: Colors.green),
@@ -1668,6 +1759,305 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('발주가 변경되었습니다: ${selectedOrder.itemName}'), backgroundColor: Colors.green),
+        );
+      }
+    }
+  }
+
+  /// 인쇄 완료 처리
+  Future<void> _handleCompletePrint(ManagedPrinter printer) async {
+    final selectedOrder = printer.selectedOrder;
+    if (selectedOrder == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('발주가 선택되지 않았습니다.'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+
+    // 확인 다이얼로그 표시
+    final confirmed = await CommonAlert.showConfirmDialog(
+      context: context,
+      title: '인쇄 완료',
+      content:
+          '발주 "${selectedOrder.itemName}"의 인쇄를 완료 처리하시겠습니까?\n\n완료 수량: ${_getTotalCompletedCountForOrder(selectedOrder.orderId)}장\n\n이 작업은 저장된 데이터를 초기화합니다.',
+      confirmText: '완료',
+      cancelText: '취소',
+      confirmColor: Colors.green,
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      final orderId = selectedOrder.orderId;
+      final totalCompleted = _getTotalCompletedCountForOrder(orderId);
+
+      // Isar에서 발주별 데이터 초기화
+      final registry = ref.read(fieldValueManagerRegistryProvider);
+      await registry.clearOrderData(orderId);
+      logger.i('발주별 Isar 데이터 초기화 완료: orderId=$orderId');
+
+      // 완료 수량 초기화
+      _orderCompletedCounts.remove(orderId);
+
+      // 발주 선택 해제
+      printer.setSelectedOrder(null);
+
+      // 완료 알림
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('발주 "${selectedOrder.itemName}" 인쇄 완료 처리 완료 (완료 수량: $totalCompleted장)'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+
+      setState(() {}); // UI 업데이트
+    } catch (e) {
+      logger.e('인쇄 완료 처리 실패: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('인쇄 완료 처리 실패: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// 발주별 인쇄 완료 버튼 빌드
+  Widget _buildCompletePrintButton(int orderId, List<ManagedPrinter> printers) {
+    // 연결된 프린터만 필터링
+    final connectedPrinters = printers.where((p) => p.connectionStatus == '연결됨').toList();
+
+    // 모든 연결된 프린터가 중지 상태인지 확인
+    final allStopped = connectedPrinters.isEmpty || connectedPrinters.every((p) => p.isPrinterOn != true);
+
+    if (!allStopped) {
+      return SizedBox.shrink(); // 모든 프린터가 중지 상태가 아니면 버튼 숨김
+    }
+
+    return OutlinedButton.icon(
+      onPressed: () => _handleCompletePrintForOrder(orderId, printers),
+      icon: Icon(Icons.check_circle, size: 14),
+      label: Text('인쇄 완료'),
+      style: OutlinedButton.styleFrom(
+        padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        minimumSize: Size(0, 28),
+        side: BorderSide(color: Colors.green),
+        foregroundColor: Colors.green[700],
+      ),
+    );
+  }
+
+  /// 발주별 인쇄 완료 처리
+  Future<void> _handleCompletePrintForOrder(int orderId, List<ManagedPrinter> printers) async {
+    final orders = ref.read(orderListProvider);
+    final order = orders.firstWhere((o) => o.orderId == orderId, orElse: () => orders.first);
+
+    // 확인 다이얼로그 표시
+    final totalCompleted = _getTotalCompletedCountForOrder(orderId);
+    final confirmed = await CommonAlert.showConfirmDialog(
+      context: context,
+      title: '인쇄 완료',
+      content:
+          '발주 ${orderId}: "${order.itemName}"의 인쇄를 완료 처리하시겠습니까?\n\n완료 수량: $totalCompleted장\n프린터 수: ${printers.length}개\n\n이 작업은 저장된 데이터를 초기화합니다.',
+      confirmText: '완료',
+      cancelText: '취소',
+      confirmColor: Colors.green,
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      // Isar에서 발주별 데이터 초기화
+      final registry = ref.read(fieldValueManagerRegistryProvider);
+      await registry.clearOrderData(orderId);
+      logger.i('발주별 Isar 데이터 초기화 완료: orderId=$orderId');
+
+      // 완료 수량 초기화
+      _orderCompletedCounts.remove(orderId);
+
+      // 해당 발주에 할당된 모든 프린터의 발주 선택 해제
+      for (final printer in printers) {
+        if (printer.selectedOrder?.orderId == orderId) {
+          printer.setSelectedOrder(null);
+        }
+      }
+
+      // 완료 알림
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('발주 ${orderId}: "${order.itemName}" 인쇄 완료 처리 완료 (완료 수량: $totalCompleted장)'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+
+      setState(() {}); // UI 업데이트
+    } catch (e) {
+      logger.e('인쇄 완료 처리 실패: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('인쇄 완료 처리 실패: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// 발주별 일괄 제어 버튼 빌드
+  Widget _buildBatchControlButtons(int orderId, List<ManagedPrinter> printers) {
+    // 연결된 프린터만 필터링
+    final connectedPrinters = printers.where((p) => p.connectionStatus == '연결됨').toList();
+    if (connectedPrinters.isEmpty) {
+      return SizedBox.shrink();
+    }
+
+    // 모든 프린터가 준비 상태인지 확인
+    final allReady = connectedPrinters.every((p) => p.isPrinterOn != true);
+    final allRunning = connectedPrinters.every((p) => p.isPrinterOn == true);
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 일괄 준비 버튼 (모든 프린터가 중지 상태일 때만 표시)
+        if (allReady)
+          OutlinedButton.icon(
+            onPressed: () => _handleBatchTogglePrinters(orderId, printers, start: true),
+            icon: Icon(Icons.play_arrow, size: 14),
+            label: Text('일괄 준비'),
+            style: OutlinedButton.styleFrom(
+              padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              minimumSize: Size(0, 28),
+              side: BorderSide(color: Colors.green),
+              foregroundColor: Colors.green[700],
+            ),
+          ),
+        // 일괄 중지 버튼 (모든 프린터가 준비 상태일 때만 표시)
+        if (allRunning)
+          OutlinedButton.icon(
+            onPressed: () => _handleBatchTogglePrinters(orderId, printers, start: false),
+            icon: Icon(Icons.pause, size: 14),
+            label: Text('일괄 중지'),
+            style: OutlinedButton.styleFrom(
+              padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              minimumSize: Size(0, 28),
+              side: BorderSide(color: Colors.orange),
+              foregroundColor: Colors.orange[700],
+            ),
+          ),
+        // 혼합 상태일 때는 두 버튼 모두 표시
+        if (!allReady && !allRunning) ...[
+          OutlinedButton.icon(
+            onPressed: () => _handleBatchTogglePrinters(orderId, printers, start: true),
+            icon: Icon(Icons.play_arrow, size: 14),
+            label: Text('일괄 준비'),
+            style: OutlinedButton.styleFrom(
+              padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              minimumSize: Size(0, 28),
+              side: BorderSide(color: Colors.green),
+              foregroundColor: Colors.green[700],
+            ),
+          ),
+          SizedBox(width: 6),
+          OutlinedButton.icon(
+            onPressed: () => _handleBatchTogglePrinters(orderId, printers, start: false),
+            icon: Icon(Icons.pause, size: 14),
+            label: Text('일괄 중지'),
+            style: OutlinedButton.styleFrom(
+              padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              minimumSize: Size(0, 28),
+              side: BorderSide(color: Colors.orange),
+              foregroundColor: Colors.orange[700],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// 발주별 일괄 프린터 제어 (준비/중지)
+  Future<void> _handleBatchTogglePrinters(int orderId, List<ManagedPrinter> printers, {required bool start}) async {
+    // 연결된 프린터만 필터링
+    final connectedPrinters = printers.where((p) => p.connectionStatus == '연결됨').toList();
+
+    if (connectedPrinters.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('연결된 프린터가 없습니다.'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+
+    // 확인 다이얼로그 표시
+    final action = start ? '준비' : '중지';
+    final confirmed = await CommonAlert.showConfirmDialog(
+      context: context,
+      title: '일괄 $action',
+      content: '발주 $orderId에 할당된 ${connectedPrinters.length}개 프린터를 모두 $action하시겠습니까?',
+      confirmText: action,
+      cancelText: '취소',
+      confirmColor: start ? Colors.green : Colors.orange,
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      int successCount = 0;
+      int failCount = 0;
+
+      // 모든 프린터를 동시에 제어
+      await Future.wait(
+        connectedPrinters.map((printer) async {
+          try {
+            await printer.setPrinterState(start);
+            successCount++;
+            logger.i('프린터 ${printer.id} 일괄 $action 성공');
+          } catch (e) {
+            failCount++;
+            logger.e('프린터 ${printer.id} 일괄 $action 실패: $e');
+          }
+        }),
+      );
+
+      // 상태 새로고침
+      ref.read(printerListProvider.notifier).refreshState();
+      setState(() {});
+
+      // 결과 알림
+      if (mounted) {
+        if (failCount == 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('발주 $orderId: ${connectedPrinters.length}개 프린터 모두 $action 완료'),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 2),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('발주 $orderId: $successCount개 성공, $failCount개 실패'),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      logger.e('일괄 $action 실패: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('일괄 $action 실패: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -1702,26 +2092,13 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
 
   /// 프린터 제거 처리
   Future<void> _handleRemovePrinter(ManagedPrinter printer) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await CommonAlert.showConfirmDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          '프린터 제거',
-          style: _PrinterStatusUIConstants.textStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
-        content: Text('${printer.name} 프린터를 제거하시겠습니까?', style: _PrinterStatusUIConstants.textStyle()),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('취소', style: _PrinterStatusUIConstants.textStyle()),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: _PrinterStatusUIConstants.errorColor),
-            child: Text('제거', style: _PrinterStatusUIConstants.textStyle()),
-          ),
-        ],
-      ),
+      title: '프린터 제거',
+      content: '${printer.name} 프린터를 제거하시겠습니까?',
+      confirmText: '제거',
+      cancelText: '취소',
+      confirmColor: _PrinterStatusUIConstants.errorColor,
     );
 
     if (confirmed == true) {

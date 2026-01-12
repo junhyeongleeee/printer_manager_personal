@@ -8,8 +8,12 @@ class OrderFieldValueMetadata {
   /// 자동 증가 ID
   Id id = Isar.autoIncrement;
 
-  /// 발주 ID (인덱스, 유니크)
-  @Index(unique: true)
+  /// 유저 ID (인덱스, 유저별 데이터 구분)
+  @Index()
+  late String userId;
+
+  /// 발주 ID (인덱스, 유저별로 유니크)
+  @Index(composite: [CompositeIndex('userId')])
   late int orderId;
 
   /// 다음 사용 가능한 필드 값 (새 값 할당 시 사용)

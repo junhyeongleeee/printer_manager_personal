@@ -8,12 +8,16 @@ class OrderFieldValueState {
   /// 자동 증가 ID
   Id id = Isar.autoIncrement;
 
+  /// 유저 ID (인덱스, 유저별 데이터 구분)
+  @Index()
+  late String userId;
+
   /// 발주 ID (인덱스)
   @Index()
   late int orderId;
 
-  /// 필드 값 (숫자) - 발주별 복합 인덱스
-  @Index(composite: [CompositeIndex('orderId')])
+  /// 필드 값 (숫자) - 유저별 발주별 복합 인덱스
+  @Index(composite: [CompositeIndex('userId'), CompositeIndex('orderId')])
   late int fieldValue;
 
   /// 할당된 프린터 ID (NULL 가능)

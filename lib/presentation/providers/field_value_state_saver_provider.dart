@@ -6,23 +6,33 @@ import 'package:print_manager/core/data/models/order_field_value_metadata.dart';
 import 'package:print_manager/core/data/models/order_printer_count.dart';
 import 'package:print_manager/core/data/models/printer_last_order.dart';
 import 'package:print_manager/core/services/logger_service.dart';
+import 'package:print_manager/presentation/providers/user_provider.dart';
 
 /// FieldValueStateSaver Provider
 /// Isar가 준비될 때까지 기다린 후 FieldValueStateSaver를 반환합니다
+/// userId는 userProvider에서 가져옵니다
 final fieldValueStateSaverProvider = FutureProvider<FieldValueStateSaver>((ref) async {
   final isar = await ref.watch(isarProvider.future);
-  return FieldValueStateSaver(isar);
+  final userId = ref.watch(userProvider)?.id ?? '';
+  if (userId.isEmpty) {
+    throw Exception('로그인이 필요합니다. userId가 없습니다.');
+  }
+  return FieldValueStateSaver(isar, userId);
 });
 
 /// 필드 값 상태 저장 관리자 (Isar 기반)
 class FieldValueStateSaver {
   final Isar _isar;
+  final String _userId; // 유저 ID (모든 데이터는 이 유저에 속함)
   final Map<String, Future<void>> _pendingSaves = {}; // 중복 저장 방지
 
-  FieldValueStateSaver(this._isar);
+  FieldValueStateSaver(this._isar, this._userId);
 
   /// 즉시 저장 (비동기, 블로킹 없음)
   void saveImmediately(OrderFieldValueState state) {
+    // userId 설정
+    state.userId = _userId;
+
     final key = '${state.orderId}_${state.fieldValue}';
 
     // 이미 저장 중인 경우 스킵 (중복 저장 방지)
@@ -52,6 +62,8 @@ class FieldValueStateSaver {
 
   /// await로 완료 보장 (중요 데이터)
   Future<void> saveWithAwait(OrderFieldValueState state) async {
+    // userId 설정
+    state.userId = _userId;
     await _isar.writeTxn(() async {
       await _isar.orderFieldValueStates.put(state);
     });
@@ -61,6 +73,7 @@ class FieldValueStateSaver {
   Future<void> saveBatch(List<OrderFieldValueState> states) async {
     await _isar.writeTxn(() async {
       for (final state in states) {
+        state.userId = _userId; // userId 설정
         await _isar.orderFieldValueStates.put(state);
       }
     });
@@ -68,24 +81,40 @@ class FieldValueStateSaver {
 
   /// 발주별 미완료 필드 값 상태 조회
   Future<List<OrderFieldValueState>> getIncompleteStates(int orderId) async {
-    final allStates = await _isar.orderFieldValueStates.filter().orderIdEqualTo(orderId).sortByFieldValue().findAll();
+    final allStates = await _isar.orderFieldValueStates
+        .filter()
+        .userIdEqualTo(_userId)
+        .orderIdEqualTo(orderId)
+        .sortByFieldValue()
+        .findAll();
     return allStates.where((state) => state.status != 'completed').toList();
   }
 
   /// 특정 필드 값 상태 조회
   Future<OrderFieldValueState?> getState(int orderId, int fieldValue) async {
-    return await _isar.orderFieldValueStates.filter().orderIdEqualTo(orderId).fieldValueEqualTo(fieldValue).findFirst();
+    return await _isar.orderFieldValueStates
+        .filter()
+        .userIdEqualTo(_userId)
+        .orderIdEqualTo(orderId)
+        .fieldValueEqualTo(fieldValue)
+        .findFirst();
   }
 
   /// 발주별 모든 필드 값 상태 조회
   Future<List<OrderFieldValueState>> getAllStates(int orderId) async {
-    return await _isar.orderFieldValueStates.filter().orderIdEqualTo(orderId).sortByFieldValue().findAll();
+    return await _isar.orderFieldValueStates
+        .filter()
+        .userIdEqualTo(_userId)
+        .orderIdEqualTo(orderId)
+        .sortByFieldValue()
+        .findAll();
   }
 
   /// 오류 상태인 필드 값 조회 (재사용 가능)
   Future<List<OrderFieldValueState>> getErrorStates(int orderId) async {
     return await _isar.orderFieldValueStates
         .filter()
+        .userIdEqualTo(_userId)
         .orderIdEqualTo(orderId)
         .statusEqualTo('error')
         .sortByFieldValue()
@@ -193,9 +222,11 @@ class FieldValueStateSaver {
   }) async {
     await _isar.writeTxn(() async {
       // 기존 메타데이터 조회 또는 새로 생성
-      final existing = await _isar.orderFieldValueMetadatas.filter().orderIdEqualTo(orderId).findFirst();
+      final existing =
+          await _isar.orderFieldValueMetadatas.filter().userIdEqualTo(_userId).orderIdEqualTo(orderId).findFirst();
 
       final metadata = existing ?? OrderFieldValueMetadata();
+      metadata.userId = _userId;
       metadata.orderId = orderId;
       metadata.nextAvailableValue = nextAvailableValue;
       metadata.startCode = startCode;
@@ -209,34 +240,34 @@ class FieldValueStateSaver {
 
   /// 발주별 메타데이터 조회
   Future<OrderFieldValueMetadata?> getMetadata(int orderId) async {
-    return await _isar.orderFieldValueMetadatas.filter().orderIdEqualTo(orderId).findFirst();
+    return await _isar.orderFieldValueMetadatas.filter().userIdEqualTo(_userId).orderIdEqualTo(orderId).findFirst();
   }
 
   /// 발주별 모든 데이터 삭제 (인쇄 완료 시)
   Future<void> clearOrderData(int orderId) async {
     await _isar.writeTxn(() async {
       // 메타데이터 삭제
-      await _isar.orderFieldValueMetadatas.filter().orderIdEqualTo(orderId).deleteAll();
+      await _isar.orderFieldValueMetadatas.filter().userIdEqualTo(_userId).orderIdEqualTo(orderId).deleteAll();
 
       // 필드 값 상태 삭제
-      await _isar.orderFieldValueStates.filter().orderIdEqualTo(orderId).deleteAll();
+      await _isar.orderFieldValueStates.filter().userIdEqualTo(_userId).orderIdEqualTo(orderId).deleteAll();
 
       // 프린터 카운트 삭제
-      await _isar.orderPrinterCounts.filter().orderIdEqualTo(orderId).deleteAll();
+      await _isar.orderPrinterCounts.filter().userIdEqualTo(_userId).orderIdEqualTo(orderId).deleteAll();
     });
-    logger.i('발주별 데이터 삭제 완료: orderId=$orderId');
+    logger.i('발주별 데이터 삭제 완료: userId=$_userId, orderId=$orderId');
   }
 
   // ========== 디버그/조회 메서드 ==========
 
   /// 모든 메타데이터 조회 (디버그용)
   Future<List<OrderFieldValueMetadata>> getAllMetadata() async {
-    return await _isar.orderFieldValueMetadatas.where().findAll();
+    return await _isar.orderFieldValueMetadatas.filter().userIdEqualTo(_userId).findAll();
   }
 
   /// 모든 발주의 모든 필드 값 상태 조회 (디버그용)
   Future<List<OrderFieldValueState>> getAllStatesDebug() async {
-    return await _isar.orderFieldValueStates.where().findAll();
+    return await _isar.orderFieldValueStates.filter().userIdEqualTo(_userId).findAll();
   }
 
   /// 발주별 통계 출력 (디버그용)
@@ -381,10 +412,15 @@ class FieldValueStateSaver {
   }) async {
     await _isar.writeTxn(() async {
       // 기존 카운트 조회
-      final existing =
-          await _isar.orderPrinterCounts.filter().orderIdEqualTo(orderId).printerIdEqualTo(printerId).findFirst();
+      final existing = await _isar.orderPrinterCounts
+          .filter()
+          .userIdEqualTo(_userId)
+          .orderIdEqualTo(orderId)
+          .printerIdEqualTo(printerId)
+          .findFirst();
 
       final countRecord = existing ?? OrderPrinterCount();
+      countRecord.userId = _userId;
       countRecord.orderId = orderId;
       countRecord.printerId = printerId;
       // 총 수량을 저장 (증가량이 아니라 총 수량)
@@ -400,19 +436,23 @@ class FieldValueStateSaver {
 
   /// 발주별 프린터 카운트 조회
   Future<int> getPrinterCount(int orderId, int printerId) async {
-    final countRecord =
-        await _isar.orderPrinterCounts.filter().orderIdEqualTo(orderId).printerIdEqualTo(printerId).findFirst();
+    final countRecord = await _isar.orderPrinterCounts
+        .filter()
+        .userIdEqualTo(_userId)
+        .orderIdEqualTo(orderId)
+        .printerIdEqualTo(printerId)
+        .findFirst();
 
     final count = countRecord?.count ?? 0;
     if (count > 0) {
-      logger.d('📊 Isar에서 카운트 조회: orderId=$orderId, printerId=$printerId, count=$count');
+      logger.d('📊 Isar에서 카운트 조회: userId=$_userId, orderId=$orderId, printerId=$printerId, count=$count');
     }
     return count;
   }
 
   /// 발주별 모든 프린터 카운트 조회
   Future<Map<int, int>> getAllPrinterCountsForOrder(int orderId) async {
-    final counts = await _isar.orderPrinterCounts.filter().orderIdEqualTo(orderId).findAll();
+    final counts = await _isar.orderPrinterCounts.filter().userIdEqualTo(_userId).orderIdEqualTo(orderId).findAll();
 
     final result = <int, int>{};
     for (final countRecord in counts) {
@@ -425,9 +465,9 @@ class FieldValueStateSaver {
   /// 발주별 모든 프린터 카운트 삭제 (인쇄 완료 시)
   Future<void> clearPrinterCountsForOrder(int orderId) async {
     await _isar.writeTxn(() async {
-      await _isar.orderPrinterCounts.filter().orderIdEqualTo(orderId).deleteAll();
+      await _isar.orderPrinterCounts.filter().userIdEqualTo(_userId).orderIdEqualTo(orderId).deleteAll();
     });
-    logger.i('발주별 프린터 카운트 삭제 완료: orderId=$orderId');
+    logger.i('발주별 프린터 카운트 삭제 완료: userId=$_userId, orderId=$orderId');
   }
 
   // ========== 프린터별 마지막 선택 발주 관련 메서드 ==========
@@ -470,9 +510,11 @@ class FieldValueStateSaver {
   }) async {
     await _isar.writeTxn(() async {
       // 기존 레코드 조회
-      final existing = await _isar.printerLastOrders.filter().printerIdEqualTo(printerId).findFirst();
+      final existing =
+          await _isar.printerLastOrders.filter().userIdEqualTo(_userId).printerIdEqualTo(printerId).findFirst();
 
       final lastOrder = existing ?? PrinterLastOrder();
+      lastOrder.userId = _userId;
       lastOrder.printerId = printerId;
       lastOrder.orderId = orderId;
       lastOrder.updatedAt = DateTime.now();
@@ -486,16 +528,17 @@ class FieldValueStateSaver {
 
   /// 프린터별 마지막 선택 발주 조회
   Future<int?> getPrinterLastOrder(int printerId) async {
-    final lastOrder = await _isar.printerLastOrders.filter().printerIdEqualTo(printerId).findFirst();
+    final lastOrder =
+        await _isar.printerLastOrders.filter().userIdEqualTo(_userId).printerIdEqualTo(printerId).findFirst();
     return lastOrder?.orderId;
   }
 
   /// 프린터별 마지막 선택 발주 삭제
   Future<void> clearPrinterLastOrder(int printerId) async {
     await _isar.writeTxn(() async {
-      await _isar.printerLastOrders.filter().printerIdEqualTo(printerId).deleteAll();
+      await _isar.printerLastOrders.filter().userIdEqualTo(_userId).printerIdEqualTo(printerId).deleteAll();
     });
-    logger.i('프린터 마지막 발주 삭제 완료: printerId=$printerId');
+    logger.i('프린터 마지막 발주 삭제 완료: userId=$_userId, printerId=$printerId');
   }
 
   /// 모든 Isar 데이터 초기화 (모든 컬렉션 삭제)
