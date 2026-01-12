@@ -337,11 +337,12 @@ class FieldValueStateSaver {
 
   // ========== 발주별 프린터 카운트 관련 메서드 ==========
 
-  /// 발주별 프린터 카운트 저장 (즉시, 비동기)
+  /// 발주별 프린터 카운트 저장 (즉시, 비동기, 각 프린터의 완료 수량 저장)
+  /// 각 프린터의 완료 수량을 저장 (예: 프린터 A=10, B=11, C=12)
   void savePrinterCountImmediately({
     required int orderId,
     required int printerId,
-    required int count,
+    required int totalCount, // 총 수량
   }) {
     final key = 'count_${orderId}_$printerId';
 
@@ -354,7 +355,7 @@ class FieldValueStateSaver {
     _pendingSaves[key] = _savePrinterCountToDatabase(
       orderId: orderId,
       printerId: printerId,
-      count: count,
+      totalCount: totalCount,
     ).then((_) {
       _pendingSaves.remove(key);
     }).catchError((e) {
@@ -365,17 +366,18 @@ class FieldValueStateSaver {
         savePrinterCountImmediately(
           orderId: orderId,
           printerId: printerId,
-          count: count,
+          totalCount: totalCount,
         );
       });
     });
   }
 
-  /// 프린터 카운트를 데이터베이스에 저장
+  /// 프린터 카운트를 데이터베이스에 저장 (각 프린터의 완료 수량 저장)
+  /// 각 프린터의 완료 수량을 저장 (예: 프린터 A=10, B=11, C=12)
   Future<void> _savePrinterCountToDatabase({
     required int orderId,
     required int printerId,
-    required int count,
+    required int totalCount, // 총 수량
   }) async {
     await _isar.writeTxn(() async {
       // 기존 카운트 조회
@@ -385,7 +387,8 @@ class FieldValueStateSaver {
       final countRecord = existing ?? OrderPrinterCount();
       countRecord.orderId = orderId;
       countRecord.printerId = printerId;
-      countRecord.count = count;
+      // 총 수량을 저장 (증가량이 아니라 총 수량)
+      countRecord.count = totalCount;
       countRecord.updatedAt = DateTime.now();
       if (existing == null) {
         countRecord.createdAt = DateTime.now();

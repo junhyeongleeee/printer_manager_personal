@@ -87,6 +87,10 @@ class _PrinterStatusUIConstants {
 class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
   PrinterStatusType _selectedFilter = PrinterStatusType.all;
 
+  // 발주별 완료 수량 (메모리에 저장, 실시간 카운트 증가 시 ++ 연산으로 업데이트)
+  // key: orderId, value: 완료 수량
+  final Map<int, int> _orderCompletedCounts = {};
+
   @override
   void initState() {
     super.initState();
@@ -155,7 +159,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
         // 발주 목록이 비어있으면 잠시 대기 후 재시도
         if (orders.isEmpty) {
           logger.w('발주 목록이 비어있어 복원을 지연합니다. 잠시 후 재시도합니다.');
-          await Future.delayed(const Duration(milliseconds: 500));
+          await Future.delayed(const Duration(milliseconds: 500)); // TODO : 500ms 대기 필요 여부 체크크
           final retryOrders = ref.read(orderListProvider);
           if (retryOrders.isEmpty) {
             logger.w('발주 목록이 여전히 비어있어 복원을 건너뜁니다.');
@@ -203,15 +207,24 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
       // _checkAndClearOrderDataIfCompleted(updatedPrinter);
     };
 
-    // 카운트 저장 콜백 설정 (Isar에 저장)
-    printer.onCountSave = (orderId, printerId, count) async {
+    // 카운트 저장 콜백 설정 (Isar에 저장, 발주별 각 프린터의 완료 수량 저장)
+    printer.onCountSave = (orderId, printerId, totalCount) async {
       try {
         final saver = await ref.read(fieldValueStateSaverProvider.future);
+
+        // 각 프린터의 완료 수량을 DB에 저장 (발주별 프린터별로 저장)
         saver.savePrinterCountImmediately(
           orderId: orderId,
           printerId: printerId,
-          count: count,
+          totalCount: totalCount, // 파라미터명은 totalCount지만 실제로는 각 프린터의 완료 수량
         );
+
+        // 완료 수량 ++ (모든 프린터의 완료 수량 합계)
+        _orderCompletedCounts[orderId] = (_orderCompletedCounts[orderId] ?? 0) + 1;
+        setState(() {}); // UI 업데이트
+
+        logger.i(
+            '💾 발주별 프린터 완료 수량 저장: orderId=$orderId, printerId=$printerId, completedCount=${_orderCompletedCounts[orderId]}');
 
         // 총 수량 도달해도 계속 카운팅 가능하도록 자동 중지 로직 제거
         // await _checkAndStopPrintersIfCompleted(orderId);
@@ -221,20 +234,33 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     };
   }
 
-  /// 같은 발주를 선택한 모든 프린터의 카운트 합산
+  /// 완료 수량 조회 (메모리에서 관리)
+  /// 처음 복원 시 각 프린터의 완료 수량을 합산하여 초기화하고,
+  /// 이후 실시간 카운트 증가 시 ++ 연산으로 업데이트
   int _getTotalCompletedCountForOrder(int orderId) {
-    final printers = ref.read(printerListProvider);
-    int totalCount = 0;
+    return _orderCompletedCounts[orderId] ?? 0;
+  }
 
-    for (final printer in printers) {
-      if (printer.selectedOrder?.orderId == orderId) {
-        // 발주별 카운트가 있으면 사용, 없으면 currentPrintCount 사용
-        final count = printer.currentPrintCount;
-        totalCount += count;
+  /// 발주별 완료 수량 초기화 (복원 시 호출)
+  /// 각 프린터의 완료 수량을 합산하여 완료 수량 초기화
+  /// 완료 수량 = 모든 프린터의 완료 수량 합계
+  Future<void> _initializeCompletedCountForOrder(int orderId) async {
+    try {
+      final saver = await ref.read(fieldValueStateSaverProvider.future);
+      final printerCounts = await saver.getAllPrinterCountsForOrder(orderId);
+
+      // 각 프린터의 완료 수량을 합산하여 완료 수량 초기화
+      int totalCompletedCount = 0;
+      for (final count in printerCounts.values) {
+        totalCompletedCount += count; // 각 프린터의 완료 수량 합계
       }
-    }
 
-    return totalCount;
+      _orderCompletedCounts[orderId] = totalCompletedCount;
+      logger.i('발주 $orderId 완료 수량 초기화: $totalCompletedCount장 (각 프린터의 완료 수량 합계)');
+    } catch (e) {
+      logger.e('완료 수량 초기화 실패: $e');
+      _orderCompletedCounts[orderId] = 0;
+    }
   }
 
   /// 발주 전체 완료 감지 및 자동 중지
@@ -252,7 +278,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     final orderQuantity = order.quantity;
     if (orderQuantity <= 0) return; // 발주 수량이 없으면 체크하지 않음
 
-    // 같은 발주를 선택한 모든 프린터의 카운트 합산
+    // 완료 수량 조회 (메모리에서 관리)
     final totalCompleted = _getTotalCompletedCountForOrder(orderId);
 
     // 완료 여부 확인
@@ -1284,47 +1310,62 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     // Consumer로 감싸서 같은 발주를 선택한 다른 프린터들의 카운트 변경도 감지
     return Consumer(
       builder: (context, ref, child) {
-        // 발주가 선택된 경우: 같은 발주를 선택한 모든 프린터의 카운트 합산
+        // printerListProvider를 watch하여 같은 발주를 선택한 다른 프린터들의 변경도 감지
+        ref.watch(printerListProvider);
+
+        // 발주가 선택된 경우: 메모리에서 완료 수량 조회
         // 발주가 선택되지 않은 경우: 기존 completePrintWork 사용
         final completed = printer.selectedOrder != null
             ? _getTotalCompletedCountForOrder(printer.selectedOrder!.orderId)
             : (printer.completePrintWork ?? 0);
 
-        final progress = totalOrder > 0 ? (completed / totalOrder).clamp(0.0, 1.0) : 0.0;
+        return Builder(
+          builder: (context) {
+            final progress = totalOrder > 0 ? (completed / totalOrder).clamp(0.0, 1.0) : 0.0;
 
-        // printerListProvider를 watch하여 같은 발주를 선택한 다른 프린터들의 변경도 감지
-        ref.watch(printerListProvider);
-
-        return Container(
-          padding: EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.grey[50],
-            border: Border.all(color: Colors.grey[200]!),
-            borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.cardBorderRadius),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '인쇄 현황',
-                style: _PrinterStatusUIConstants.textStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey[700],
-                ),
+            return Container(
+              padding: EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey[50],
+                border: Border.all(color: Colors.grey[200]!),
+                borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.cardBorderRadius),
               ),
-              SizedBox(height: 12),
-              // 2열 그리드 (실시간 카운트 제거)
-              Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(child: _buildStatBox('발주 수량', '$totalOrder', Colors.grey[900]!)),
-                  SizedBox(width: 8),
-                  Expanded(child: _buildStatBox('완료 수량', '$completed', _PrinterStatusUIConstants.printingColor)),
+                  Text(
+                    '인쇄 현황',
+                    style: _PrinterStatusUIConstants.textStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                  SizedBox(height: 12),
+                  // 3열 그리드: 발주 수량, 실시간 카운트, 완료 수량
+                  // ListenableBuilder로 프린터의 실시간 카운트 변경 감지
+                  ListenableBuilder(
+                    listenable: printer,
+                    builder: (context, child) {
+                      // 각 프린터가 몇 장을 인쇄하고 있는지 표시 (발주 선택 시 0부터 시작)
+                      final realtimeCount = printer.currentPrintCount;
+                      return Row(
+                        children: [
+                          Expanded(child: _buildStatBox('발주 수량', '$totalOrder', Colors.grey[900]!)),
+                          SizedBox(width: 8),
+                          Expanded(
+                              child: _buildStatBox('완료 수량', '$completed', _PrinterStatusUIConstants.printingColor)),
+                          SizedBox(width: 8),
+                          Expanded(child: _buildStatBox('실시간 카운트', '$realtimeCount', Color(0xFF9C27B0))),
+                        ],
+                      );
+                    },
+                  ),
+                  if (totalOrder > 0) ...[SizedBox(height: 12), _buildProgressBar(progress)],
                 ],
               ),
-              if (totalOrder > 0) ...[SizedBox(height: 12), _buildProgressBar(progress)],
-            ],
-          ),
+            );
+          },
         );
       },
     );
@@ -1515,7 +1556,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
       final startCode = int.tryParse(order.startCode) ?? 1;
       final endCode = int.tryParse(order.endCode) ?? 1000000;
 
-      // 같은 발주를 선택한 모든 프린터의 카운트 합산 (현재 총 카운트)
+      // 완료 수량 조회 (메모리에서 관리)
       final currentTotalCount = _getTotalCompletedCountForOrder(order.orderId);
 
       // 발주별 FieldValueManager 가져오기 또는 생성 (Isar에서 데이터 복원 포함)
@@ -1535,30 +1576,27 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
           return manager.requestFormattedFieldValue(printerId);
         });
 
-        // Isar에서 발주별 프린터 카운트 복원
-        // 주의: setSelectedOrder가 먼저 호출되어 기준점이 설정된 후에 복원해야 함
+        // 각 프린터의 완료 수량 복원 및 완료 수량 초기화
         try {
           final saver = await ref.read(fieldValueStateSaverProvider.future);
-          final savedCount = await saver.getPrinterCount(order.orderId, printerId);
+          final savedCompletedCount = await saver.getPrinterCount(order.orderId, printerId);
 
-          logger.i('🔍 Isar에서 발주별 프린터 카운트 조회: orderId=${order.orderId}, printerId=$printerId, savedCount=$savedCount');
+          // 각 프린터의 복원된 완료 수량 저장
+          printer.setOrderRestoredTotalCount(order.orderId, savedCompletedCount);
 
-          // 복원된 카운트가 있고, 기준점이 이미 설정되어 있으면 복원 (setOrderCount에서 검증 수행)
-          if (savedCount > 0) {
-            // 기준점이 설정되어 있는지 확인
-            final baseline = printer.getOrderBaseline(order.orderId);
-            if (baseline != null) {
-              printer.setOrderCount(order.orderId, savedCount);
-              logger.i(
-                  '발주별 프린터 카운트 복원 시도: orderId=${order.orderId}, printerId=$printerId, count=$savedCount, 기준점=$baseline');
-            } else {
-              logger.w('발주별 프린터 카운트 복원 스킵: orderId=${order.orderId}, printerId=$printerId, 기준점이 설정되지 않음');
-            }
+          if (savedCompletedCount > 0) {
+            logger.i(
+                '🔍 발주별 프린터 완료 수량 복원: orderId=${order.orderId}, printerId=$printerId, completedCount=$savedCompletedCount');
           } else {
-            logger.d('발주별 프린터 카운트 없음: orderId=${order.orderId}, printerId=$printerId');
+            logger.d('발주별 프린터 완료 수량 없음: orderId=${order.orderId}, printerId=$printerId');
+          }
+
+          // 완료 수량 초기화 (처음 한 번만, 모든 프린터의 완료 수량을 합산)
+          if (!_orderCompletedCounts.containsKey(order.orderId)) {
+            await _initializeCompletedCountForOrder(order.orderId);
           }
         } catch (e) {
-          logger.e('발주별 프린터 카운트 복원 실패: $e');
+          logger.e('발주별 프린터 완료 수량 복원 실패: $e');
         }
       }
 
