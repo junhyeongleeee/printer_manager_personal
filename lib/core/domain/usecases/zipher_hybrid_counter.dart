@@ -3,12 +3,17 @@ import 'package:print_manager/core/data/enums/zipher_command_enum.dart';
 import 'package:print_manager/core/infra/zipher_socket.dart';
 import 'package:print_manager/core/services/logger_service.dart';
 
-/// Zipher 폴링 카운터
-/// 폴링 방식으로 카운트를 주기적으로 조회
+/// Zipher 프린터 모니터링
+/// 폴링 방식으로 프린터의 카운트와 상태를 주기적으로 조회
 ///
 /// Zipher 프로토콜 특성:
 /// - GPC (Get Counts) 명령으로 카운트 조회
-/// - GST (Get Status) 명령으로 상태 확인
+/// - GST (Get Status) 명령으로 프린터 상태 확인
+///
+/// 모니터링 기능:
+/// - 실시간 카운트 추적
+/// - 프린터 상태 실시간 확인
+/// - 상태 변경 감지 및 콜백
 class ZipherHybridCounter {
   final ZipherSocket socket;
   Timer? _verificationTimer;
@@ -26,6 +31,7 @@ class ZipherHybridCounter {
   Function(int count)? onCountChanged;
   Function()? onPrintStarted;
   Function()? onPrintCompleted;
+  Function(String status)? onStatusChanged; // 프린터 상태 변경 콜백
 
   // 필드 값 요청 콜백 (중앙 관리자에게 필드 값 요청)
   // 반환: 프린터에 바로 전송 가능한 포맷된 필드 값 (uniqueCode + HEX), null이면 사용 가능한 값이 없음
@@ -33,12 +39,13 @@ class ZipherHybridCounter {
 
   ZipherHybridCounter(this.socket);
 
-  /// 폴링 모니터링 시작
+  /// 프린터 모니터링 시작
   ///
   /// [verificationInterval]: 폴링 주기 (기본 2초)
   /// [jobName]: 필드 업데이트에 사용할 Job 이름 (선택사항)
   /// [fieldName]: 필드 업데이트에 사용할 필드 이름 (선택사항, 기본값: 'Field00')
   /// [onRequestFieldValue]: 필드 값 요청 콜백 (중앙 관리자에게 필드 값 요청, 포맷된 문자열 반환)
+  /// [onStatusChanged]: 프린터 상태 변경 콜백 (상태 코드 문자열 전달)
   /// 주기적으로 GPC와 GST 명령으로 카운트와 상태를 조회
   Future<void> startHybridMonitoring({
     Duration verificationInterval = const Duration(seconds: 2),
@@ -47,6 +54,7 @@ class ZipherHybridCounter {
     Function(int count)? onCountChanged,
     Function()? onPrintStarted,
     Function()? onPrintCompleted,
+    Function(String status)? onStatusChanged,
     Future<String?> Function()? onRequestFieldValue,
   }) async {
     if (_isMonitoring) {
@@ -57,6 +65,7 @@ class ZipherHybridCounter {
     this.onCountChanged = onCountChanged;
     this.onPrintStarted = onPrintStarted;
     this.onPrintCompleted = onPrintCompleted;
+    this.onStatusChanged = onStatusChanged;
     this.onRequestFieldValue = onRequestFieldValue;
 
     // 필드 업데이트 설정
@@ -79,7 +88,7 @@ class ZipherHybridCounter {
       await _verifyStatus();
     });
 
-    logger.i('Zipher 폴링 모니터링 시작 (폴링 주기: ${verificationInterval.inSeconds}초)');
+    logger.i('Zipher 프린터 모니터링 시작 (폴링 주기: ${verificationInterval.inSeconds}초)');
   }
 
   /// 상태 응답 처리
@@ -94,17 +103,22 @@ class ZipherHybridCounter {
           final previousStatus = _lastStatus;
           _lastStatus = statusCode;
 
-          // 인쇄 시작 (상태가 인쇄 중으로 변경)
-          if (_isPrintingStatus(statusCode) && !_isPrintingStatus(previousStatus ?? '')) {
-            logger.i('상태 변경: 인쇄 시작 ($previousStatus -> $statusCode)');
-            onPrintStarted?.call();
-          }
+          logger.i('프린터 상태 변경: $previousStatus -> $statusCode');
 
-          // 인쇄 완료 (인쇄 중에서 다른 상태로 변경)
-          if (_isPrintingStatus(previousStatus ?? '') && !_isPrintingStatus(statusCode)) {
-            logger.i('상태 변경: 인쇄 완료 ($previousStatus -> $statusCode)');
-            onPrintCompleted?.call();
-          }
+          // 상태 변경 콜백 호출
+          onStatusChanged?.call(statusCode);
+
+          // // 인쇄 시작 (상태가 인쇄 중으로 변경)
+          // if (_isPrintingStatus(statusCode) && !_isPrintingStatus(previousStatus ?? '')) {
+          //   logger.i('인쇄 시작 감지 ($previousStatus -> $statusCode)');
+          //   onPrintStarted?.call();
+          // }
+
+          // // 인쇄 완료 (인쇄 중에서 다른 상태로 변경)
+          // if (_isPrintingStatus(previousStatus ?? '') && !_isPrintingStatus(statusCode)) {
+          //   logger.i('인쇄 완료 감지 ($previousStatus -> $statusCode)');
+          //   onPrintCompleted?.call();
+          // }
         }
       }
     } catch (e) {
@@ -125,7 +139,8 @@ class ZipherHybridCounter {
         upperStatus == '3'; // Zipher 상태 코드 3 = Running
   }
 
-  /// 카운트 검증 (GPC 명령)
+  /// 프린터 모니터링 (카운트 및 상태 확인)
+  /// GPC 명령으로 카운트 조회, GST 명령으로 상태 확인
   Future<void> _verifyStatus() async {
     // 이미 검증 중이면 스킵 (동시 실행 방지)
     if (_isVerifying) {
@@ -185,20 +200,21 @@ class ZipherHybridCounter {
         return;
       }
 
-      // GST로 상태도 확인 (백업)
-      // final statusResponse = await socket.getPrinterStatus();
+      // GST로 프린터 상태 확인
+      final statusResponse = await socket.getPrinterStatus();
 
       // 모니터링 중지 확인 (상태 처리 전)
-      // if (!_isMonitoring) {
-      //   logger.d('모니터링이 중지되어 상태 처리를 취소합니다.');
-      //   return;
-      // }
+      if (!_isMonitoring) {
+        logger.d('모니터링이 중지되어 상태 처리를 취소합니다.');
+        return;
+      }
 
-      // _processStatusResponse(statusResponse);
+      // 상태 응답 처리
+      _processStatusResponse(statusResponse);
     } catch (e) {
       // 모니터링이 중지된 경우의 에러는 무시
       if (_isMonitoring) {
-        logger.e('카운트 검증 실패: $e');
+        logger.e('프린터 모니터링 실패: $e');
       } else {
         logger.d('모니터링 중지로 인한 검증 취소: $e');
       }
@@ -323,7 +339,7 @@ class ZipherHybridCounter {
       _isVerifying = false;
     }
 
-    logger.i('Zipher 폴링 모니터링 중지 완료');
+    logger.i('Zipher 프린터 모니터링 중지 완료');
   }
 
   /// 필드 값 요청 콜백 업데이트 (발주 선택 시 호출)
@@ -334,6 +350,9 @@ class ZipherHybridCounter {
 
   /// 현재 카운트 조회
   int get currentCount => _currentCount;
+
+  /// 현재 프린터 상태 조회
+  String? get currentStatus => _lastStatus;
 
   /// 모니터링 중인지 확인
   bool get isMonitoring => _isMonitoring;

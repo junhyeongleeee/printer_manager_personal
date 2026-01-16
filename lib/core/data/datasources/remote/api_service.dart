@@ -22,6 +22,10 @@ import 'package:print_manager/core/data/models/response/printerjob_response.dart
 import 'package:print_manager/core/data/models/response/printerjob_list_response.dart';
 import 'package:print_manager/core/data/models/request/update_printerjob_request.dart';
 import 'package:print_manager/core/data/models/response/update_printerjob_response.dart';
+import 'package:print_manager/core/data/models/response/order_history_response.dart';
+import 'package:print_manager/core/data/models/response/order_shipment_response.dart';
+import 'package:print_manager/core/data/models/request/print_event_request.dart';
+import 'package:print_manager/core/data/models/response/print_event_response.dart';
 
 class ApiService {
   final Dio _dio;
@@ -127,5 +131,44 @@ class ApiService {
       data: request.toJson(),
     );
     return WarehouseResponse.fromJson(response.data);
+  }
+
+  Future<OrderHistoryListResponse> getOrderHistoryList(
+    int orderId,
+    int pageSize,
+    int currentPage,
+  ) async {
+    final response = await _dio.get(
+      '/api/v1/print-manager/$orderId/history-list',
+      queryParameters: {
+        'pageSize': pageSize,
+        'currentPage': currentPage,
+      },
+    );
+    return OrderHistoryListResponse.fromJson(response.data);
+  }
+
+  Future<OrderShipmentListResponse> getOrderShipmentList(
+    int orderId,
+    int pageSize,
+    int currentPage,
+  ) async {
+    final response = await _dio.get(
+      '/api/v1/print-manager/$orderId/shipment-list',
+      queryParameters: {
+        'pageSize': pageSize,
+        'currentPage': currentPage,
+      },
+    );
+    return OrderShipmentListResponse.fromJson(response.data);
+  }
+
+  /// Print Event API
+  Future<PrintEventResponse> sendPrintEvent(PrintEventRequest request) async {
+    final response = await _dio.patch(
+      '/api/v1/print-manager/print-event',
+      data: request.toJson(),
+    );
+    return PrintEventResponse.fromJson(response.data);
   }
 }

@@ -5,7 +5,21 @@ import 'dart:typed_data';
 
 import 'package:print_manager/core/data/zipher_commands.dart';
 import 'package:print_manager/core/domain/printer_socket.dart';
-import 'package:print_manager/core/services/logger_service.dart';
+
+/// 요청 큐 항목
+class _QueuedRequest {
+  final String message;
+  final bool useAckEnding;
+  final Duration timeout;
+  final Completer<String> completer;
+
+  _QueuedRequest({
+    required this.message,
+    required this.useAckEnding,
+    required this.timeout,
+    required this.completer,
+  });
+}
 
 class ZipherSocket implements PrinterSocket {
   Socket? _socket;
@@ -14,6 +28,10 @@ class ZipherSocket implements PrinterSocket {
   List<String> _responseBuffer = [];
   //Set<String> _expectedTags = {};
   //Set<String> _receivedTags = {};
+
+  // 요청 큐: 진행 중인 요청이 있으면 큐에 추가하고 순차 처리
+  final List<_QueuedRequest> _requestQueue = [];
+  bool _isProcessingQueue = false;
 
   Function(String message)? unsolicitedData;
   Function(String message)? onData;
@@ -110,23 +128,75 @@ class ZipherSocket implements PrinterSocket {
     if (_socket == null) {
       return Future.error(StateError("Socket not connected."));
     }
-    if (_responseCompleter != null && !_responseCompleter!.isCompleted) {
-      return Future.error(StateError("Another request is in progress."));
+
+    // 요청 큐에 추가
+    final completer = Completer<String>();
+    final queuedRequest = _QueuedRequest(
+      message: message,
+      useAckEnding: useAckEnding,
+      timeout: timeout,
+      completer: completer,
+    );
+
+    _requestQueue.add(queuedRequest);
+
+    // 큐 처리가 시작되지 않았으면 시작
+    _processQueue();
+
+    return completer.future;
+  }
+
+  /// 요청 큐 처리 (순차적으로 하나씩 처리)
+  Future<void> _processQueue() async {
+    // 이미 처리 중이면 중복 실행 방지 (새 요청은 큐에만 추가됨)
+    if (_isProcessingQueue) {
+      return;
     }
 
-    _responseCompleter = Completer<String>();
-    _responseBuffer.clear();
+    _isProcessingQueue = true;
 
-    _socket!.write('$message\r');
+    try {
+      // 큐가 비어있을 때까지 계속 처리
+      while (_requestQueue.isNotEmpty) {
+        final request = _requestQueue.removeAt(0);
 
-    return _responseCompleter!.future.timeout(
-      timeout,
-      onTimeout: () {
-        _responseCompleter = null;
-        _responseBuffer.clear();
-        throw TimeoutException("Response timeout for: $message");
-      },
-    );
+        try {
+          // 진행 중인 요청이 있으면 완료될 때까지 대기
+          while (_responseCompleter != null && !_responseCompleter!.isCompleted) {
+            await Future.delayed(const Duration(milliseconds: 10));
+          }
+
+          _responseCompleter = Completer<String>();
+          _responseBuffer.clear();
+
+          _socket!.write('${request.message}\r');
+
+          final response = await _responseCompleter!.future.timeout(
+            request.timeout,
+            onTimeout: () {
+              _responseCompleter = null;
+              _responseBuffer.clear();
+              throw TimeoutException("Response timeout for: ${request.message}");
+            },
+          );
+
+          request.completer.complete(response);
+        } catch (e) {
+          _responseCompleter = null;
+          _responseBuffer.clear();
+          request.completer.completeError(e);
+        }
+      }
+    } finally {
+      // 큐 처리가 완료되면 플래그 해제
+      _isProcessingQueue = false;
+
+      // 플래그 해제 후 다시 확인 (이 시점에 새로운 요청이 추가되었을 수 있음)
+      // 재귀 호출로 남은 요청 처리
+      if (_requestQueue.isNotEmpty) {
+        _processQueue();
+      }
+    }
   }
 
   void sendUtf16LE(String message) {

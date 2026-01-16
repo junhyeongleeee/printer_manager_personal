@@ -53,3 +53,6 @@ app.*.map.json
 *.env
 pubspec.lock
 macos/
+
+# 문서 파일 제외
+*.md

@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../providers/printerjob_list_provider.dart';
-import 'package:print_manager/core/data/repositories/printer_repository_provider.dart';
+import '../providers/order_list_provider.dart';
+import 'package:print_manager/core/data/repositories/order_repository_provider.dart';
+import '../../core/domain/entities/order_item.dart';
 
 /// UI 상수 (Windows UI 스타일)
 class _UIConstants {
@@ -42,11 +43,10 @@ class OrderCompletePage extends ConsumerStatefulWidget {
 }
 
 class _OrderCompletePageState extends ConsumerState<OrderCompletePage> {
-
   void _refreshOrderList() async {
-    final printerjobRepository = ref.read(printerRepositoryProvider);
-    final response = await printerjobRepository.printerJobList();
-    ref.read(printerjobListProvider.notifier).mergeJobs(response.data.printJobList);
+    final orderRepository = ref.read(orderRepositoryProvider);
+    final response = await orderRepository.orderList();
+    ref.read(orderListProvider.notifier).replaceOrderListInProvider(ref, response);
   }
 
   @override
@@ -57,28 +57,43 @@ class _OrderCompletePageState extends ConsumerState<OrderCompletePage> {
 
   @override
   Widget build(BuildContext context) {
-    //final completions = ref.watch(orderCompletionListProvider);
-    final printerjobs = ref.watch(printerjobListProvider);
+    final orders = ref.watch(orderListProvider);
+
+    final completedOrders = orders.where((order) => order.status == '5').toList();
+
+    completedOrders.sort((a, b) {
+      final dateA = a.printCompletedAt?.isNotEmpty ?? false
+          ? DateTime.tryParse(a.printCompletedAt!.replaceAll(' ', 'T')) ?? DateTime(1970)
+          : DateTime.tryParse(a.regDate.replaceAll(' ', 'T')) ?? DateTime(1970);
+      final dateB = b.printCompletedAt?.isNotEmpty ?? false
+          ? DateTime.tryParse(b.printCompletedAt!.replaceAll(' ', 'T')) ?? DateTime(1970)
+          : DateTime.tryParse(b.regDate.replaceAll(' ', 'T')) ?? DateTime(1970);
+      return dateB.compareTo(dateA); // 내림차순 (최신순)
+    });
 
     return Container(
       color: _UIConstants.backgroundColor,
       child: Column(
         children: [
           _buildHeader(),
-          Expanded(child: _buildOrderTable(printerjobs)),
+          Expanded(child: _buildOrderTable(completedOrders)),
         ],
       ),
     );
   }
 
-  /// 헤더 영역 빌드
+  /// 헤더 영역 빌드 (다른 화면과 통일된 스타일)
   Widget _buildHeader() {
     return Container(
-      height: _UIConstants.headerHeight,
-      padding: EdgeInsets.symmetric(horizontal: _UIConstants.horizontalPadding),
+      margin: EdgeInsets.all(16),
+      padding: EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: _UIConstants.headerBackgroundColor,
-        border: Border(bottom: BorderSide(color: _UIConstants.borderGray, width: 1)),
+        border: Border.all(color: _UIConstants.borderGray, width: 1),
+        borderRadius: BorderRadius.circular(_UIConstants.borderRadius),
+        boxShadow: [
+          BoxShadow(color: Colors.black12, blurRadius: 2, offset: Offset(0, 1)),
+        ],
       ),
       child: Row(
         children: [
@@ -93,7 +108,7 @@ class _OrderCompletePageState extends ConsumerState<OrderCompletePage> {
     );
   }
 
-  /// 새로고침 버튼 빌드
+  /// 새로고침 버튼 빌드 (다른 화면과 통일된 스타일)
   Widget _buildRefreshButton() {
     return OutlinedButton.icon(
       onPressed: () {
@@ -102,11 +117,7 @@ class _OrderCompletePageState extends ConsumerState<OrderCompletePage> {
       icon: Icon(Icons.refresh, size: 16),
       label: Text('새로고침', style: _UIConstants.textStyle(fontSize: 13, fontWeight: FontWeight.w500)),
       style: OutlinedButton.styleFrom(
-        backgroundColor: _UIConstants.rowBackgroundColor,
-        foregroundColor: _UIConstants.textGray,
-        side: BorderSide(color: _UIConstants.borderGray),
         padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        minimumSize: Size(_UIConstants.buttonMinWidth, _UIConstants.buttonHeight),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(_UIConstants.borderRadius),
         ),
@@ -114,8 +125,7 @@ class _OrderCompletePageState extends ConsumerState<OrderCompletePage> {
     );
   }
 
-  /// 주문 테이블 빌드
-  Widget _buildOrderTable(List printerjobs) {
+  Widget _buildOrderTable(List<OrderItem> orders) {
     return Container(
       margin: EdgeInsets.all(_UIConstants.horizontalPadding),
       decoration: BoxDecoration(
@@ -157,18 +167,18 @@ class _OrderCompletePageState extends ConsumerState<OrderCompletePage> {
                       _centerCal('인쇄 시작'),
                       _centerCal('인쇄 완료'),
                     ],
-                    rows: printerjobs.asMap().entries.map((entry) {
+                    rows: orders.asMap().entries.map((entry) {
                       final index = entry.key;
                       final item = entry.value;
 
                       return DataRow(
                         cells: [
                           _centerCell('${index + 1}'),
-                          _centerCell("${item.itemName}"),
-                          _centerCell("${item.quantity}"),
+                          _centerCell(item.itemName),
+                          _centerCell('${item.printedQuantity}'),
                           _centerCell(item.regDate),
-                          _centerCell(item.startedAt ?? "-"),
-                          _centerCell(item.completedAt ?? "-"),
+                          _centerCell(item.printStartedAt?.isNotEmpty ?? false ? item.printStartedAt! : "-"),
+                          _centerCell(item.printCompletedAt?.isNotEmpty ?? false ? item.printCompletedAt! : "-"),
                         ],
                       );
                     }).toList(),

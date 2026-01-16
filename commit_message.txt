@@ -1,0 +1,57 @@
+feat: Isar 유저별 데이터 분리 및 발주별 프린터 관리 기능 추가
+
+## 주요 변경사항
+
+### 1. Isar 데이터 유저별 분리
+- 모든 Isar 모델에 userId 필드 추가
+  - OrderFieldValueState, OrderFieldValueMetadata
+  - OrderPrinterCount, PrinterLastOrder
+- FieldValueStateSaver에 userId 기반 필터링 적용
+- 로그인한 유저별로 데이터 완전 분리
+
+### 2. 발주별 프린터 그룹화 UI
+- 발주별로 프린터를 그룹화하여 표시
+- 발주 헤더에 완료 수량 실시간 표시
+- 발주 미선택 프린터 별도 섹션으로 표시
+
+### 3. 발주별 일괄 제어 기능
+- 발주별 일괄 준비/중지 버튼 추가
+- 발주별 인쇄 완료 버튼 추가 (모든 프린터 중지 상태일 때만 활성화)
+- 발주 선택 시 해당 발주 섹션으로 자동 이동
+
+### 4. 공통 알럿 다이얼로그 컴포넌트
+- Windows 스타일 공통 알럿 다이얼로그 생성
+- 발주 선택 다이얼로그와 동일한 UI 스타일 적용
+- 텍스트 기반/커스텀 컨텐츠 지원
+- 버튼 1개/2개 모두 지원
+- 기존 AlertDialog를 공통 컴포넌트로 교체
+
+## 수정된 파일
+
+### 모델
+- lib/core/data/models/order_field_value_state.dart
+- lib/core/data/models/order_field_value_metadata.dart
+- lib/core/data/models/order_printer_count.dart
+- lib/core/data/models/printer_last_order.dart
+
+### Provider
+- lib/presentation/providers/field_value_state_saver_provider.dart
+  - userId 기반 필터링 추가
+  - 모든 조회/저장 메서드에 userId 적용
+
+### UI
+- lib/presentation/pages/printer_status_page.dart
+  - 발주별 프린터 그룹화
+  - 발주별 일괄 제어 기능
+  - 발주별 인쇄 완료 기능
+  - 공통 알럿으로 교체
+
+### 위젯
+- lib/presentation/widgets/common_alert_dialog.dart (신규)
+- lib/presentation/widgets/common_alert_dialog_example.dart (신규)
+
+## 테스트
+- test/README_ISAR_TEST.md: Isar 테스트 가이드 추가
+
+## 기타
+- .gitignore: md 파일 추적 제외 추가

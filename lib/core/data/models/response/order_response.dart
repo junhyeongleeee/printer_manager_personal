@@ -12,8 +12,7 @@ abstract class OrderResponse with _$OrderResponse {
     required String timestamp,
   }) = _OrderResponse;
 
-  factory OrderResponse.fromJson(Map<String, dynamic> json) =>
-      _$OrderResponseFromJson(json);
+  factory OrderResponse.fromJson(Map<String, dynamic> json) => _$OrderResponseFromJson(json);
 }
 
 @freezed
@@ -23,8 +22,7 @@ abstract class OrderResponseDataWrapper with _$OrderResponseDataWrapper {
     required List<OrderResponseData> orderList,
   }) = _OrderResponseDataWrapper;
 
-  factory OrderResponseDataWrapper.fromJson(Map<String, dynamic> json) =>
-      _$OrderResponseDataWrapperFromJson(json);
+  factory OrderResponseDataWrapper.fromJson(Map<String, dynamic> json) => _$OrderResponseDataWrapperFromJson(json);
 }
 
 @freezed
@@ -36,7 +34,10 @@ abstract class OrderResponseData with _$OrderResponseData {
     required int itemId,
     required String itemName,
     required int quantity,
-    required int remainingQuantity,
+    required int? baseQuantity, // nullable: null일 경우 quantity와 같은 값으로 설정
+    required int printedQuantity,
+    required String? printStartedAt,
+    required String? printCompletedAt,
     required int stock,
     required String uniqueCode,
     required String startCode,
@@ -46,6 +47,5 @@ abstract class OrderResponseData with _$OrderResponseData {
     required String regDate,
   }) = _OrderResponseData;
 
-  factory OrderResponseData.fromJson(Map<String, dynamic> json) =>
-      _$OrderResponseDataFromJson(json);
+  factory OrderResponseData.fromJson(Map<String, dynamic> json) => _$OrderResponseDataFromJson(json);
 }

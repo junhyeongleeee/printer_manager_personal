@@ -5,10 +5,8 @@ import 'package:print_manager/core/data/mappers/printerjob_data_mapper.dart';
 import 'package:collection/collection.dart';
 import 'package:print_manager/core/services/logger_service.dart';
 
-
-final printerjobListProvider =
-StateNotifierProvider<PrinterjobListNotifier, List<PrinterjobItem>>(
-      (ref) => PrinterjobListNotifier(),
+final printerjobListProvider = StateNotifierProvider<PrinterjobListNotifier, List<PrinterjobItem>>(
+  (ref) => PrinterjobListNotifier(),
 );
 
 class PrinterjobListNotifier extends StateNotifier<List<PrinterjobItem>> {
@@ -28,9 +26,7 @@ class PrinterjobListNotifier extends StateNotifier<List<PrinterjobItem>> {
   //   state = [...currentItems, ...newItems];
   // }
   void mergeJobs(List<PrintJob> jobs) {
-    final currentKeys = state
-        .map((e) => '${e.orderPrintJobId}')
-        .toSet();
+    final currentKeys = state.map((e) => '${e.orderPrintJobId}').toSet();
 
     final newItems = jobs
         .where((job) => !currentKeys.contains('${job.orderPrintJobId}'))

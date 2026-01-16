@@ -1,5 +1,9 @@
+import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:print_manager/core/data/models/request/patch_order_request.dart';
+import 'package:print_manager/presentation/pages/order_manage_page.dart';
 import '../providers/printer_list_provider.dart';
 import '../providers/order_list_provider.dart';
 import '../providers/field_value_manager_registry_provider.dart';
@@ -7,8 +11,12 @@ import '../providers/field_value_state_saver_provider.dart';
 import '../widgets/common_alert_dialog.dart';
 import '../../core/domain/entities/managed_printer.dart';
 import '../../core/domain/entities/order_item.dart';
+import '../../core/data/enums/printer_connection_status.dart';
+import '../../core/data/enums/printer_print_status.dart';
 import 'package:print_manager/core/data/models/request/printers_request.dart';
 import 'package:print_manager/core/data/repositories/printer_repository_provider.dart';
+import 'package:print_manager/core/data/repositories/order_repository_provider.dart';
+import 'package:print_manager/core/data/models/request/print_event_request.dart';
 import 'package:print_manager/core/services/logger_service.dart';
 
 class PrinterStatusPage extends ConsumerStatefulWidget {
@@ -20,8 +28,7 @@ class PrinterStatusPage extends ConsumerStatefulWidget {
 enum PrinterStatusType {
   all,
   online, // 대기중
-  printing, // 인쇄중
-  warning, // 경고
+  running, // 가동중
   offline, // 오프라인
 }
 
@@ -73,15 +80,33 @@ class _PrinterStatusUIConstants {
     switch (status) {
       case PrinterStatusType.online:
         return Color(0xFFF1F8F4); // 연한 녹색
-      case PrinterStatusType.printing:
+      case PrinterStatusType.running:
         return Color(0xFFE3F2FD); // 연한 파란색
-      case PrinterStatusType.warning:
-        return Color(0xFFFFF8E1); // 연한 노란색
       case PrinterStatusType.offline:
         return Color(0xFFFFEBEE); // 연한 빨간색
       default:
         return cardBg;
     }
+  }
+}
+
+/// 발주별 print-event 상태 관리
+class _PrintEventState {
+  final int orderId;
+  final int unit; // 단위 (예: 1)
+  int lastApiCount; // 마지막 API 호출 시점의 카운트
+  DateTime? lastApiTime; // 마지막 API 호출 시간
+  Timer? timer; // 5분 타이머
+
+  _PrintEventState({
+    required this.orderId,
+    this.unit = 1, // 기본값 1
+    this.lastApiCount = 0,
+  });
+
+  void dispose() {
+    timer?.cancel();
+    timer = null;
   }
 }
 
@@ -91,6 +116,14 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
   // 발주별 완료 수량 (메모리에 저장, 실시간 카운트 증가 시 ++ 연산으로 업데이트)
   // key: orderId, value: 완료 수량
   final Map<int, int> _orderCompletedCounts = {};
+
+  // 발주별 접기/펴기 상태 (key: orderId (null 포함), value: true면 펼침, false면 접힘)
+  // 기본값은 true (펼침 상태)
+  final Map<int?, bool> _expandedOrders = {};
+
+  // 발주별 print-event 상태 관리
+  // key: orderId, value: _PrintEventState
+  final Map<int, _PrintEventState> _printEventStates = {};
 
   @override
   void initState() {
@@ -121,11 +154,41 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     }
   }
 
-  /// 프린터 목록 새로고침
+  /// 프린터 목록 새로고침 (API에서 목록 다시 가져오기)
   Future<void> _refreshPrinterList() async {
     final printerRepository = ref.read(printerRepositoryProvider);
     final response = await printerRepository.printerList();
     ref.read(printerListProvider.notifier).mergeNewData(ref, response);
+  }
+
+  /// 프린터 연결 상태 확인 (새로고침 버튼용)
+  /// 현재 등록된 프린터들의 연결 상태를 다시 체크
+  Future<void> _checkPrinterConnections() async {
+    final printerList = ref.read(printerListProvider);
+    for (final printer in printerList) {
+      try {
+        // 발주 완료 체크 콜백 전달
+        await printer.checkConnectionStatus(
+          onCompletedCountCheck: () {
+            final selectedOrder = printer.selectedOrder;
+            if (selectedOrder != null) {
+              final totalCompleted = _getTotalCompletedCountForOrder(selectedOrder.orderId);
+              final totalQuantity = selectedOrder.quantity;
+              return totalCompleted >= totalQuantity;
+            }
+            return false;
+          },
+        );
+      } catch (e) {
+        logger.e('프린터 ${printer.name} 연결 상태 확인 실패: $e');
+      }
+    }
+    // Provider 상태 갱신 (statusbar 업데이트를 위해)
+    ref.read(printerListProvider.notifier).refreshState();
+    // UI 갱신
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   /// 모든 프린터 연결 초기화
@@ -134,12 +197,32 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     for (final printer in printerList) {
       // PrinterListNotifier.connect를 통해 연결해야
       // 필드 값 관리자(FieldValueManager)가 함께 초기화된다.
+      // 발주 완료 체크 콜백 전달 (초기 연결 시에는 발주가 아직 복원되지 않았으므로 null)
       await ref.read(printerListProvider.notifier).connect(printer);
       logger.i("initConnection- printer: $printer, connection initialized with FieldValueManager");
       _setupCountUpdateCallback(printer);
 
       // 프린터별 마지막 선택 발주 복원
       await _restorePrinterLastOrder(printer);
+
+      // 발주 복원 후 완료 수량 초기화
+      final selectedOrder = printer.selectedOrder;
+      if (selectedOrder != null) {
+        await _initializeCompletedCountForOrder(selectedOrder.orderId);
+
+        // 발주 복원 후 프린터 상태 확인 및 발주 완료 여부 체크
+        try {
+          await printer.checkConnectionStatus(
+            onCompletedCountCheck: () {
+              final totalCompleted = _getTotalCompletedCountForOrder(selectedOrder.orderId);
+              final totalQuantity = selectedOrder.baseQuantity;
+              return totalCompleted >= totalQuantity;
+            },
+          );
+        } catch (e) {
+          logger.e('프린터 ${printer.name} 상태 확인 실패: $e');
+        }
+      }
     }
   }
 
@@ -227,8 +310,11 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
         logger.i(
             '💾 발주별 프린터 완료 수량 저장: orderId=$orderId, printerId=$printerId, completedCount=${_orderCompletedCounts[orderId]}');
 
-        // 총 수량 도달해도 계속 카운팅 가능하도록 자동 중지 로직 제거
-        // await _checkAndStopPrintersIfCompleted(orderId);
+        // print-event API 단위 체크 (카운트 증가 시)
+        await _checkAndSendPrintEventIfNeeded(orderId);
+
+        // quantity(여유 수량) 도달 시 모든 프린터 중단
+        await _checkAndStopPrintersIfQuantityReached(orderId);
       } catch (e) {
         logger.e('프린터 카운트 저장 실패: $e');
       }
@@ -264,8 +350,58 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     }
   }
 
+  /// quantity(여유 수량) 도달 시 모든 프린터 중단
+  /// 발주의 quantity(여유 수량)와 현재 인쇄된 수량을 비교하여 도달 여부 확인
+  Future<void> _checkAndStopPrintersIfQuantityReached(int orderId) async {
+    final printers = ref.read(printerListProvider);
+    final selectedPrinters = printers.where((p) => p.selectedOrder?.orderId == orderId).toList();
+
+    if (selectedPrinters.isEmpty) return;
+
+    // 첫 번째 프린터의 발주 정보 사용 (모든 프린터가 같은 발주를 선택했으므로)
+    final order = selectedPrinters.first.selectedOrder;
+    if (order == null) return;
+
+    final orderQuantity = order.quantity; // quantity는 여유 수량
+    if (orderQuantity <= 0) return; // 여유 수량이 없으면 체크하지 않음
+
+    // 완료 수량 조회 (메모리에서 관리)
+    final totalCompleted = _getTotalCompletedCountForOrder(orderId);
+
+    // quantity(여유 수량) 도달 여부 확인
+    if (totalCompleted >= orderQuantity) {
+      logger.i('여유 수량 도달 감지: orderId=$orderId, quantity=$orderQuantity, totalCompleted=$totalCompleted');
+
+      // 같은 발주를 선택한 모든 프린터를 중지
+      for (final printer in selectedPrinters) {
+        if (printer.isPrinterOn == true) {
+          try {
+            await printer.setPrinterState(false);
+            logger.i('프린터 ${printer.id} 자동 중지: 여유 수량 도달');
+          } catch (e) {
+            logger.e('프린터 ${printer.id} 자동 중지 실패: $e');
+          }
+        }
+      }
+
+      setState(() {}); // UI 업데이트
+
+      // 완료 알림
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('발주 "${order.itemName}" 여유 수량 도달: $totalCompleted/$orderQuantity'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 5),
+          ),
+        );
+      }
+    }
+  }
+
   /// 발주 전체 완료 감지 및 자동 중지
   /// 발주의 quantity와 현재 인쇄된 수량을 비교하여 완료 여부 확인
+  @Deprecated('Use _checkAndStopPrintersIfQuantityReached instead')
   Future<void> _checkAndStopPrintersIfCompleted(int orderId) async {
     final printers = ref.read(printerListProvider);
     final selectedPrinters = printers.where((p) => p.selectedOrder?.orderId == orderId).toList();
@@ -446,8 +582,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
               children: [
                 _buildFilterButton('전체', PrinterStatusType.all, counts['all']!),
                 _buildFilterButton('대기중', PrinterStatusType.online, counts['online']!),
-                _buildFilterButton('인쇄중', PrinterStatusType.printing, counts['printing']!),
-                _buildFilterButton('경고', PrinterStatusType.warning, counts['warning']!),
+                _buildFilterButton('인쇄중', PrinterStatusType.running, counts['running']!),
                 _buildFilterButton('오프라인', PrinterStatusType.offline, counts['offline']!),
               ],
             ),
@@ -491,7 +626,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
           ),
           SizedBox(width: 8),
           OutlinedButton.icon(
-            onPressed: () => _refreshPrinterList(),
+            onPressed: () => _checkPrinterConnections(),
             icon: Icon(Icons.refresh, size: 16),
             label: Text('새로고침'),
             style: OutlinedButton.styleFrom(
@@ -525,30 +660,36 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
   }
 
   /// Status Bar (Windows 스타일)
+  /// Consumer로 감싸서 프린터 상태 변경 시 자동 업데이트
   Widget _buildStatusBar(List<ManagedPrinter> printers) {
-    final counts = _getStatusCounts(printers);
+    // Consumer로 감싸서 프린터 목록 변경 및 각 프린터의 상태 변경 감지
+    return Consumer(
+      builder: (context, ref, child) {
+        // 프린터 목록을 watch하여 변경 감지
+        final latestPrinters = ref.watch(printerListProvider);
+        final counts = _getStatusCounts(latestPrinters);
 
-    return Container(
-      margin: EdgeInsets.fromLTRB(16, 0, 16, 16),
-      decoration: BoxDecoration(
-        color: _PrinterStatusUIConstants.cardBg,
-        border: Border.all(color: _PrinterStatusUIConstants.borderColor),
-        borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.cardBorderRadius),
-        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 2, offset: Offset(0, 1))],
-      ),
-      child: Row(
-        children: [
-          Expanded(child: _buildStatusBarItem('전체', counts['all']!, Colors.grey[800]!)),
-          Container(width: 1, height: 40, color: Colors.grey[300]),
-          Expanded(child: _buildStatusBarItem('대기중', counts['online']!, _PrinterStatusUIConstants.onlineColor)),
-          Container(width: 1, height: 40, color: Colors.grey[300]),
-          Expanded(child: _buildStatusBarItem('인쇄중', counts['printing']!, _PrinterStatusUIConstants.printingColor)),
-          Container(width: 1, height: 40, color: Colors.grey[300]),
-          Expanded(child: _buildStatusBarItem('경고', counts['warning']!, _PrinterStatusUIConstants.warningColor)),
-          Container(width: 1, height: 40, color: Colors.grey[300]),
-          Expanded(child: _buildStatusBarItem('오프라인', counts['offline']!, _PrinterStatusUIConstants.offlineColor)),
-        ],
-      ),
+        return Container(
+          margin: EdgeInsets.fromLTRB(16, 0, 16, 16),
+          decoration: BoxDecoration(
+            color: _PrinterStatusUIConstants.cardBg,
+            border: Border.all(color: _PrinterStatusUIConstants.borderColor),
+            borderRadius: BorderRadius.circular(_PrinterStatusUIConstants.cardBorderRadius),
+            boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 2, offset: Offset(0, 1))],
+          ),
+          child: Row(
+            children: [
+              Expanded(child: _buildStatusBarItem('전체', counts['all']!, Colors.grey[800]!)),
+              Container(width: 1, height: 40, color: Colors.grey[300]),
+              Expanded(child: _buildStatusBarItem('대기중', counts['online']!, _PrinterStatusUIConstants.onlineColor)),
+              Container(width: 1, height: 40, color: Colors.grey[300]),
+              Expanded(child: _buildStatusBarItem('인쇄중', counts['running']!, _PrinterStatusUIConstants.printingColor)),
+              Container(width: 1, height: 40, color: Colors.grey[300]),
+              Expanded(child: _buildStatusBarItem('오프라인', counts['offline']!, _PrinterStatusUIConstants.offlineColor)),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -616,9 +757,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
           SizedBox(width: 12),
           Expanded(child: _buildStatusCard('대기중', counts['online']!, Color(0xFF4CAF50), null)),
           SizedBox(width: 12),
-          Expanded(child: _buildStatusCard('인쇄중', counts['printing']!, Color(0xFF2196F3), null)),
-          SizedBox(width: 12),
-          Expanded(child: _buildStatusCard('경고', counts['warning']!, Color(0xFFFFC107), null)),
+          Expanded(child: _buildStatusCard('인쇄중', counts['running']!, Color(0xFF2196F3), null)),
           SizedBox(width: 12),
           Expanded(child: _buildStatusCard('오프라인', counts['offline']!, Color(0xFFF44336), null)),
         ],
@@ -661,8 +800,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
   /// 상태별 카운트 계산
   Map<String, int> _getStatusCounts(List<ManagedPrinter> printers) {
     int online = 0;
-    int printing = 0;
-    int warning = 0;
+    int running = 0;
     int offline = 0;
 
     for (final printer in printers) {
@@ -671,11 +809,8 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
         case PrinterStatusType.online:
           online++;
           break;
-        case PrinterStatusType.printing:
-          printing++;
-          break;
-        case PrinterStatusType.warning:
-          warning++;
+        case PrinterStatusType.running:
+          running++;
           break;
         case PrinterStatusType.offline:
           offline++;
@@ -685,28 +820,29 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
       }
     }
 
-    return {'all': printers.length, 'online': online, 'printing': printing, 'warning': warning, 'offline': offline};
+    return {'all': printers.length, 'online': online, 'running': running, 'offline': offline};
   }
 
   /// 프린터 상태 타입 결정
   PrinterStatusType _getPrinterStatusType(ManagedPrinter printer) {
     // 오프라인: 연결되지 않음
-    if (printer.connectionStatus != '연결됨') {
+    if (printer.connectionStatus != PrinterConnectionStatus.connected) {
       return PrinterStatusType.offline;
     }
 
-    // 인쇄중: printStatus에 '인쇄 중' 포함
-    if (printer.printStatus.contains('인쇄 중')) {
-      return PrinterStatusType.printing;
+    // 가동중
+    if (printer.printStatus == PrinterPrintStatus.running) {
+      return PrinterStatusType.running;
     }
 
-    // 경고: 연결되었지만 이상 상태
-    if (printer.printStatus != '인쇄 대기' && printer.printStatus != '인쇄 완료') {
-      return PrinterStatusType.warning;
+    // 대기중
+    if (printer.connectionStatus == PrinterConnectionStatus.connected &&
+        printer.printStatus == PrinterPrintStatus.offline) {
+      return PrinterStatusType.online;
     }
 
-    // 대기중: 연결되었고 대기 상태
-    return PrinterStatusType.online;
+    // 오프라인
+    return PrinterStatusType.offline;
   }
 
   /// 필터링된 프린터 목록
@@ -961,6 +1097,9 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     final orders = ref.read(orderListProvider);
     final order = orderId != null ? orders.firstWhere((o) => o.orderId == orderId, orElse: () => orders.first) : null;
 
+    // 접기/펴기 상태 확인 (기본값은 true - 펼침)
+    final isExpanded = _expandedOrders[orderId] ?? true;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -978,6 +1117,22 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
           ),
           child: Row(
             children: [
+              // 접기/펴기 버튼
+              IconButton(
+                icon: Icon(
+                  isExpanded ? Icons.expand_less : Icons.expand_more,
+                  size: 20,
+                  color: orderId != null ? Colors.blue[700] : Colors.grey[600],
+                ),
+                onPressed: () {
+                  setState(() {
+                    _expandedOrders[orderId] = !isExpanded;
+                  });
+                },
+                padding: EdgeInsets.zero,
+                constraints: BoxConstraints(),
+              ),
+              SizedBox(width: 4),
               Icon(
                 orderId != null ? Icons.shopping_cart : Icons.print_disabled,
                 size: 18,
@@ -1021,20 +1176,21 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
             ],
           ),
         ),
-        // 프린터 그리드
-        GridView.builder(
-          shrinkWrap: true,
-          physics: NeverScrollableScrollPhysics(),
-          padding: EdgeInsets.symmetric(horizontal: _PrinterStatusUIConstants.cardSpacing),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: _getCrossAxisCount(context),
-            crossAxisSpacing: _PrinterStatusUIConstants.cardSpacing,
-            mainAxisSpacing: _PrinterStatusUIConstants.cardSpacing,
-            childAspectRatio: 0.75,
+        // 프린터 그리드 (접기/펴기 상태에 따라 표시/숨김)
+        if (isExpanded)
+          GridView.builder(
+            shrinkWrap: true,
+            physics: NeverScrollableScrollPhysics(),
+            padding: EdgeInsets.symmetric(horizontal: _PrinterStatusUIConstants.cardSpacing),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: _getCrossAxisCount(context),
+              crossAxisSpacing: _PrinterStatusUIConstants.cardSpacing,
+              mainAxisSpacing: _PrinterStatusUIConstants.cardSpacing,
+              childAspectRatio: 0.75,
+            ),
+            itemCount: printers.length,
+            itemBuilder: (context, index) => _buildPrinterCard(printers[index]),
           ),
-          itemCount: printers.length,
-          itemBuilder: (context, index) => _buildPrinterCard(printers[index]),
-        ),
       ],
     );
   }
@@ -1166,10 +1322,8 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
         return Icon(Icons.check_circle, size: 20, color: Color(0xFF4CAF50));
       case PrinterStatusType.offline:
         return Icon(Icons.error, size: 20, color: Color(0xFFF44336));
-      case PrinterStatusType.printing:
+      case PrinterStatusType.running:
         return Icon(Icons.access_time, size: 20, color: Color(0xFF2196F3));
-      case PrinterStatusType.warning:
-        return Icon(Icons.warning, size: 20, color: Color(0xFFFFC107));
       default:
         return Icon(Icons.help_outline, size: 20, color: Colors.grey);
     }
@@ -1189,13 +1343,9 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
         label = '오프라인';
         color = _PrinterStatusUIConstants.offlineColor;
         break;
-      case PrinterStatusType.printing:
-        label = '인쇄중';
+      case PrinterStatusType.running:
+        label = '가동중';
         color = _PrinterStatusUIConstants.printingColor;
-        break;
-      case PrinterStatusType.warning:
-        label = '경고';
-        color = _PrinterStatusUIConstants.warningColor;
         break;
       default:
         label = '알 수 없음';
@@ -1409,8 +1559,6 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
 
         return Builder(
           builder: (context) {
-            final progress = totalOrder > 0 ? (completed / totalOrder).clamp(0.0, 1.0) : 0.0;
-
             return Container(
               padding: EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -1449,7 +1597,14 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
                       );
                     },
                   ),
-                  if (totalOrder > 0) ...[SizedBox(height: 12), _buildProgressBar(progress)],
+                  if (totalOrder > 0 && printer.selectedOrder != null) ...[
+                    SizedBox(height: 12),
+                    _buildProgressBar(
+                      completed: completed,
+                      baseQuantity: printer.selectedOrder!.baseQuantity,
+                      quantity: printer.selectedOrder!.quantity,
+                    ),
+                  ],
                 ],
               ),
             );
@@ -1506,8 +1661,32 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     );
   }
 
-  /// 진행률 바
-  Widget _buildProgressBar(double progress) {
+  /// 진행률 바 (baseQuantity와 quantity 구간별 색상 표시)
+  Widget _buildProgressBar({
+    required int completed,
+    required int baseQuantity,
+    required int quantity,
+  }) {
+    if (quantity <= 0) return SizedBox.shrink();
+
+    // 전체 진행률 (completed / quantity)
+    final totalProgress = (completed / quantity).clamp(0.0, 1.0);
+
+    // baseQuantity까지의 진행률
+    final baseProgress = baseQuantity > 0 ? (completed.clamp(0, baseQuantity) / baseQuantity).clamp(0.0, 1.0) : 0.0;
+
+    // baseQuantity부터 quantity까지의 진행률
+    final remainingProgress = (quantity > baseQuantity && completed > baseQuantity)
+        ? ((completed - baseQuantity) / (quantity - baseQuantity)).clamp(0.0, 1.0)
+        : 0.0;
+
+    // 색상 정의 (톤은 비슷하게)
+    final baseColor = _PrinterStatusUIConstants.primaryBlue; // baseQuantity까지 색상 (0xFF0078D4)
+    final remainingColor = Color(0xFF4A90E2); // baseQuantity부터 quantity까지 색상 (약간 밝은 파란색)
+
+    // baseQuantity와 quantity가 같으면 구분할 필요 없음
+    final showDivision = quantity > baseQuantity;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1515,25 +1694,105 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text('진행률', style: _PrinterStatusUIConstants.textStyle(fontSize: 11, color: Colors.grey[600])),
-            Text(
-              '${(progress * 100).toStringAsFixed(1)}%',
-              style: _PrinterStatusUIConstants.textStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[700],
-              ),
+            Row(
+              children: [
+                Text(
+                  '${(totalProgress * 100).toStringAsFixed(1)}%',
+                  style: _PrinterStatusUIConstants.textStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[700],
+                  ),
+                ),
+                if (showDivision) ...[
+                  SizedBox(width: 8),
+                  Text(
+                    '(발주: $baseQuantity / 여유: $quantity)',
+                    style: _PrinterStatusUIConstants.textStyle(
+                      fontSize: 10,
+                      color: Colors.grey[500],
+                    ),
+                  ),
+                ],
+              ],
             ),
           ],
         ),
         SizedBox(height: 4),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: progress,
-            backgroundColor: Colors.grey[200],
-            valueColor: AlwaysStoppedAnimation<Color>(_PrinterStatusUIConstants.primaryBlue),
-            minHeight: 6,
-          ),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final totalWidth = constraints.maxWidth;
+            final baseWidth = totalWidth * (baseQuantity / quantity).clamp(0.0, 1.0);
+            // 첫 번째 구간의 실제 진행률에 따른 너비 계산
+            final firstSectionProgressWidth = completed < baseQuantity
+                ? baseWidth * baseProgress // baseQuantity 미만일 때 진행률에 비례한 너비
+                : baseWidth; // baseQuantity 이상일 때 전체 너비
+
+            return Stack(
+              children: [
+                // 진행률 바 배경
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: Container(
+                    height: 6,
+                    color: Colors.grey[200],
+                    child: Row(
+                      children: [
+                        // baseQuantity까지 구간 (첫 번째 색상)
+                        if (baseQuantity > 0 && firstSectionProgressWidth > 0)
+                          Container(
+                            width: firstSectionProgressWidth,
+                            decoration: BoxDecoration(
+                              color: completed >= baseQuantity
+                                  ? baseColor
+                                  : (completed > 0 ? baseColor : Colors.transparent),
+                              borderRadius: BorderRadius.only(
+                                topLeft: Radius.circular(4),
+                                bottomLeft: Radius.circular(4),
+                                topRight: (showDivision && completed < baseQuantity) ? Radius.zero : Radius.circular(4),
+                                bottomRight:
+                                    (showDivision && completed < baseQuantity) ? Radius.zero : Radius.circular(4),
+                              ),
+                            ),
+                          ),
+                        // baseQuantity부터 quantity까지 구간 (두 번째 색상)
+                        if (showDivision)
+                          Expanded(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: completed > baseQuantity
+                                    ? (remainingProgress > 0 ? remainingColor : Colors.transparent)
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.only(
+                                  topLeft: (baseQuantity > 0 && completed >= baseQuantity)
+                                      ? Radius.zero
+                                      : Radius.circular(4),
+                                  bottomLeft: (baseQuantity > 0 && completed >= baseQuantity)
+                                      ? Radius.zero
+                                      : Radius.circular(4),
+                                  topRight: Radius.circular(4),
+                                  bottomRight: Radius.circular(4),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                // baseQuantity 위치 구분선
+                if (showDivision && baseQuantity > 0)
+                  Positioned(
+                    left: baseWidth - 1,
+                    child: Container(
+                      width: 2,
+                      height: 6,
+                      color: Colors.white,
+                    ),
+                  ),
+              ],
+            );
+          },
         ),
       ],
     );
@@ -1541,7 +1800,7 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
 
   /// 액션 버튼들 (Windows 스타일 - 같은 행에 배치)
   Widget _buildActionButtons(ManagedPrinter printer, bool hasOrder) {
-    final isConnected = printer.connectionStatus == '연결됨';
+    final isConnected = printer.connectionStatus == PrinterConnectionStatus.connected;
     final isPrinterOn = printer.isPrinterOn;
 
     // 발주 선택은 프린터가 준비 상태(isPrinterOn == true)가 아니면 가능 (오프라인이어도 상관없음)
@@ -1682,6 +1941,8 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
           // 완료 수량 초기화 (처음 한 번만, 모든 프린터의 완료 수량을 합산)
           if (!_orderCompletedCounts.containsKey(order.orderId)) {
             await _initializeCompletedCountForOrder(order.orderId);
+            // print-event 상태 초기화 및 타이머 시작
+            _initializePrintEventState(order);
           }
         } catch (e) {
           logger.e('발주별 프린터 완료 수량 복원 실패: $e');
@@ -1729,6 +1990,12 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     if (selectedOrder != null) {
       final wasAlreadySelected = printer.selectedOrder?.orderId == selectedOrder.orderId;
 
+      // 기존 발주를 선택한 프린터가 있는지 확인 (현재 프린터 제외)
+      final printers = ref.read(printerListProvider);
+      final otherPrintersWithSameOrder =
+          printers.where((p) => p != printer && p.selectedOrder?.orderId == selectedOrder.orderId).toList();
+      final hasOtherPrintersWithSameOrder = otherPrintersWithSameOrder.isNotEmpty;
+
       // 발주 선택 시 먼저 발주를 설정 (카운트 초기화)
       printer.setSelectedOrder(selectedOrder);
 
@@ -1748,6 +2015,27 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
       // 발주 선택 시 Isar에서 데이터 복원 및 FieldValueManager 초기화
       // setSelectedOrder가 먼저 호출되어 카운트가 0으로 초기화된 후 복원
       await _initializeFieldValueManagerForOrder(printer, selectedOrder);
+
+      // print-event 상태 초기화 (처음 한 번만)
+      final isFirstTimeForOrder = !_printEventStates.containsKey(selectedOrder.orderId);
+      if (isFirstTimeForOrder) {
+        _initializePrintEventState(selectedOrder);
+      }
+
+      // 기존 발주를 선택한 프린터가 없는 경우 (이 프린터가 첫 번째로 선택하는 경우)
+      // 마지막 API 호출 이후 증가한 카운트 전송
+      if (!hasOtherPrintersWithSameOrder) {
+        final state = _printEventStates[selectedOrder.orderId];
+        if (state != null) {
+          final currentCount = _getTotalCompletedCountForOrder(selectedOrder.orderId);
+          final incrementCount = currentCount - state.lastApiCount;
+          if (incrementCount > 0) {
+            logger.i(
+                '📋 발주 선택 시 print-event 호출 (기존 프린터 없음): orderId=${selectedOrder.orderId}, incrementCount=$incrementCount');
+            await _sendPrintEvent(selectedOrder.orderId, incrementCount);
+          }
+        }
+      }
 
       // UI 업데이트 (발주별 그룹화를 위해 필요)
       setState(() {});
@@ -1791,6 +2079,13 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
       final orderId = selectedOrder.orderId;
       final totalCompleted = _getTotalCompletedCountForOrder(orderId);
 
+      final request = PatchOrderRequest(status: OrderStatus.printingComplete);
+      final orderRepository = ref.read(orderRepositoryProvider);
+      final response = await orderRepository.updateOrder(orderId, request);
+
+      // response 확인, 실패 시 아래 작업 취소 해야함.
+      logger.i("updateOrder response: $response");
+
       // Isar에서 발주별 데이터 초기화
       final registry = ref.read(fieldValueManagerRegistryProvider);
       await registry.clearOrderData(orderId);
@@ -1829,26 +2124,44 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
 
   /// 발주별 인쇄 완료 버튼 빌드
   Widget _buildCompletePrintButton(int orderId, List<ManagedPrinter> printers) {
-    // 연결된 프린터만 필터링
-    final connectedPrinters = printers.where((p) => p.connectionStatus == '연결됨').toList();
+    // Consumer로 감싸서 완료 수량 변경 시 버튼 업데이트
+    return Consumer(
+      builder: (context, ref, child) {
+        // 연결된 프린터만 필터링
+        final connectedPrinters =
+            printers.where((p) => p.connectionStatus == PrinterConnectionStatus.connected).toList();
 
-    // 모든 연결된 프린터가 중지 상태인지 확인
-    final allStopped = connectedPrinters.isEmpty || connectedPrinters.every((p) => p.isPrinterOn != true);
+        // 모든 연결된 프린터가 중지 상태인지 확인
+        final allStopped = connectedPrinters.isEmpty || connectedPrinters.every((p) => p.isPrinterOn != true);
 
-    if (!allStopped) {
-      return SizedBox.shrink(); // 모든 프린터가 중지 상태가 아니면 버튼 숨김
-    }
+        // 발주 정보 가져오기
+        final orders = ref.read(orderListProvider);
+        final order = orders.firstWhere((o) => o.orderId == orderId, orElse: () => orders.first);
 
-    return OutlinedButton.icon(
-      onPressed: () => _handleCompletePrintForOrder(orderId, printers),
-      icon: Icon(Icons.check_circle, size: 14),
-      label: Text('인쇄 완료'),
-      style: OutlinedButton.styleFrom(
-        padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        minimumSize: Size(0, 28),
-        side: BorderSide(color: Colors.green),
-        foregroundColor: Colors.green[700],
-      ),
+        // 완료 수량 조회 (printerListProvider를 watch하여 완료 수량 변경 감지)
+        ref.watch(printerListProvider);
+        final totalCompleted = _getTotalCompletedCountForOrder(orderId);
+
+        // 발주량(baseQuantity) 이상 프린팅했는지 확인
+        final baseQuantityReached = totalCompleted >= order.baseQuantity;
+
+        // 모든 프린터가 중지 상태이고, 발주량 이상 프린팅했을 때만 버튼 활성화
+        if (!allStopped || !baseQuantityReached) {
+          return SizedBox.shrink(); // 조건을 만족하지 않으면 버튼 숨김
+        }
+
+        return OutlinedButton.icon(
+          onPressed: () => _handleCompletePrintForOrder(orderId, printers),
+          icon: Icon(Icons.check_circle, size: 14),
+          label: Text('인쇄 완료'),
+          style: OutlinedButton.styleFrom(
+            padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            minimumSize: Size(0, 28),
+            side: BorderSide(color: Colors.green),
+            foregroundColor: Colors.green[700],
+          ),
+        );
+      },
     );
   }
 
@@ -1872,6 +2185,17 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     if (confirmed != true) return;
 
     try {
+      // 인쇄 완료 전에 마지막 API 호출 이후 증가한 카운트 전송
+      final state = _printEventStates[orderId];
+      if (state != null) {
+        final currentCount = _getTotalCompletedCountForOrder(orderId);
+        final incrementCount = currentCount - state.lastApiCount;
+        if (incrementCount > 0) {
+          logger.i('🏁 인쇄 완료 전 print-event 호출: orderId=$orderId, incrementCount=$incrementCount');
+          await _sendPrintEvent(orderId, incrementCount);
+        }
+      }
+
       // Isar에서 발주별 데이터 초기화
       final registry = ref.read(fieldValueManagerRegistryProvider);
       await registry.clearOrderData(orderId);
@@ -1879,6 +2203,10 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
 
       // 완료 수량 초기화
       _orderCompletedCounts.remove(orderId);
+
+      // print-event 상태 정리
+      _printEventStates[orderId]?.dispose();
+      _printEventStates.remove(orderId);
 
       // 해당 발주에 할당된 모든 프린터의 발주 선택 해제
       for (final printer in printers) {
@@ -2016,7 +2344,26 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
       await Future.wait(
         connectedPrinters.map((printer) async {
           try {
-            await printer.setPrinterState(start);
+            // Running 상태로 변경하려는 경우 발주 완료 여부 체크
+            await printer.setPrinterState(
+              start,
+              onCompletedCountCheck: start
+                  ? () {
+                      final selectedOrder = printer.selectedOrder;
+                      if (selectedOrder != null) {
+                        final totalCompleted = _getTotalCompletedCountForOrder(selectedOrder.orderId);
+                        final totalQuantity = selectedOrder.baseQuantity; // 총 발주 수량
+
+                        // 총 발주 수량과 완료 수량이 같으면 Running 상태로 변경 불가
+                        if (totalCompleted >= totalQuantity) {
+                          logger.w('프린터 ${printer.id} 일괄 $action 실패: 발주 완료됨 (완료: $totalCompleted/$totalQuantity)');
+                          return true; // 완료됨
+                        }
+                      }
+                      return false; // 완료되지 않음
+                    }
+                  : null,
+            );
             successCount++;
             logger.i('프린터 ${printer.id} 일괄 $action 성공');
           } catch (e) {
@@ -2078,8 +2425,38 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
         await printer.setPrinterState(false);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${printer.name} 프린터가 중지되었습니다')));
       } else {
-        // 프린터 ON으로 변경
-        await printer.setPrinterState(true);
+        // 프린터 ON으로 변경 전에 발주 완료 여부 체크
+        final selectedOrder = printer.selectedOrder;
+        bool isOrderCompleted = false;
+        if (selectedOrder != null) {
+          final totalCompleted = _getTotalCompletedCountForOrder(selectedOrder.orderId);
+          final totalQuantity = selectedOrder.baseQuantity; // 총 발주 수량
+
+          // 총 발주 수량과 완료 수량이 같으면 Running 상태로 변경 불가
+          isOrderCompleted = totalCompleted >= totalQuantity;
+          if (isOrderCompleted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('발주 "${selectedOrder.itemName}"는 이미 완료되었습니다. (완료: $totalCompleted/$totalQuantity)'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+            return;
+          }
+        }
+
+        // 프린터 ON으로 변경 (발주 완료 체크 콜백 전달)
+        await printer.setPrinterState(
+          true,
+          onCompletedCountCheck: () {
+            if (selectedOrder != null) {
+              final totalCompleted = _getTotalCompletedCountForOrder(selectedOrder.orderId);
+              final totalQuantity = selectedOrder.baseQuantity;
+              return totalCompleted >= totalQuantity;
+            }
+            return false;
+          },
+        );
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${printer.name} 프린터가 시작되었습니다')));
       }
 
@@ -2258,6 +2635,174 @@ class _PrinterStatusPageState extends ConsumerState<PrinterStatusPage> {
     final response = await printerRepository.addPrinter(request);
     logger.i("response: $response");
     printer.updateFields(id: response.data.processingCompanyPrinterIndex);
+  }
+
+  // ========== Print Event API 관련 메서드 ==========
+
+  /// UUID 형식의 난수 eventKey 생성 (멱등성 보장)
+  /// 서버가 같은 eventKey로 여러 번 호출된 경우 중복 카운트를 방지하기 위해
+  /// 각 API 호출마다 고유한 난수 eventKey를 생성합니다.
+  String _generateEventKey() {
+    final random = Random();
+    // UUID v4 형식: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+    // 4는 버전, y는 8, 9, a, b 중 하나
+    final chars = '0123456789abcdef';
+    final parts = <String>[];
+
+    // 8자리
+    parts.add(List.generate(8, (_) => chars[random.nextInt(chars.length)]).join());
+    // 4자리
+    parts.add(List.generate(4, (_) => chars[random.nextInt(chars.length)]).join());
+    // 4자리 (버전 4)
+    parts.add('4' + List.generate(3, (_) => chars[random.nextInt(chars.length)]).join());
+    // 4자리 (variant)
+    final variantChars = '89ab';
+    parts.add(variantChars[random.nextInt(variantChars.length)] +
+        List.generate(3, (_) => chars[random.nextInt(chars.length)]).join());
+    // 12자리
+    parts.add(List.generate(12, (_) => chars[random.nextInt(chars.length)]).join());
+
+    return parts.join('-');
+  }
+
+  /// 발주별 print-event 상태 초기화 및 타이머 시작
+  void _initializePrintEventState(OrderItem order) {
+    final orderId = order.orderId;
+
+    // 기존 상태가 있으면 정리
+    _printEventStates[orderId]?.dispose();
+
+    // 새 상태 생성 (eventKey는 각 API 호출 시마다 생성)
+    final state = _PrintEventState(
+      orderId: orderId,
+      lastApiCount: 0,
+    );
+
+    _printEventStates[orderId] = state;
+
+    // 5분 타이머 시작
+    _startPrintEventTimer(orderId);
+
+    logger.i('📊 Print-event 상태 초기화: orderId=$orderId, unit=${state.unit}');
+  }
+
+  /// 5분 타이머 시작
+  void _startPrintEventTimer(int orderId) {
+    final state = _printEventStates[orderId];
+    if (state == null) return;
+
+    // 기존 타이머가 있으면 취소
+    state.timer?.cancel();
+
+    // 5분마다 실행되는 타이머 시작
+    state.timer = Timer.periodic(const Duration(minutes: 5), (timer) {
+      _onPrintEventTimerTick(orderId);
+    });
+
+    logger.i('⏰ Print-event 타이머 시작: orderId=$orderId');
+  }
+
+  /// 타이머 틱 처리 (5분마다 실행)
+  Future<void> _onPrintEventTimerTick(int orderId) async {
+    final state = _printEventStates[orderId];
+    if (state == null) return;
+
+    // 현재 완료 수량 조회
+    final currentCount = _getTotalCompletedCountForOrder(orderId);
+
+    // 마지막 API 호출 이후 증가한 카운트 계산
+    final incrementCount = currentCount - state.lastApiCount;
+
+    logger.i('⏰ Print-event 타이머 틱: orderId=$orderId, currentCount=$currentCount lastApiCount=${state.lastApiCount}');
+
+    // 증가한 카운트가 있으면 API 호출
+    if (incrementCount > 0) {
+      logger.i('⏰ Print-event incrementCount > 0 타이머 틱: orderId=$orderId, incrementCount=$incrementCount');
+      await _sendPrintEvent(orderId, incrementCount);
+    } else {
+      logger.d('⏰ Print-event 타이머 틱: orderId=$orderId, 증가한 카운트 없음');
+    }
+  }
+
+  /// 카운트 증가 시 단위 체크 및 API 호출
+  /// 단위 배수에 도달했을 때, 마지막 API 호출 이후 실제 증가한 카운트만큼 전송합니다.
+  /// 예: unit=100, lastApiCount=60, currentCount=200인 경우
+  ///     실제로는 140만큼 더 프린트했으므로 quantity=140으로 전송
+  Future<void> _checkAndSendPrintEventIfNeeded(int orderId) async {
+    final state = _printEventStates[orderId];
+    if (state == null) return;
+
+    // 현재 완료 수량 조회
+    final currentCount = _getTotalCompletedCountForOrder(orderId);
+
+    // 단위 체크: 현재 카운트가 단위의 배수인지 확인
+    // 예: 단위가 30이면 30, 60, 90, ... 마다 실행
+    final shouldSendByUnit = (currentCount > 0) && (currentCount % state.unit == 0);
+
+    logger.i(
+        '📊 Print-event 단위 도달: orderId=$orderId, currentCount=$currentCount, lastApiCount=${state.lastApiCount}, shouldSendByUnit=$shouldSendByUnit, unit=${state.unit}');
+
+    if (shouldSendByUnit) {
+      // 마지막 API 호출 이후 실제 증가한 카운트 계산
+      final incrementCount = currentCount - state.lastApiCount;
+
+      // 증가한 카운트가 있으면 전송 (타이머에서 이미 일부를 호출했을 수 있으므로)
+      if (incrementCount > 0) {
+        logger.i(
+            '📊 Print-event 단위 도달: orderId=$orderId, currentCount=$currentCount, lastApiCount=${state.lastApiCount}, incrementCount=$incrementCount, unit=${state.unit}');
+        await _sendPrintEvent(orderId, incrementCount);
+      }
+    }
+  }
+
+  /// Print-event API 호출
+  /// 각 호출마다 고유한 난수 eventKey를 생성하여 멱등성을 보장합니다.
+  Future<void> _sendPrintEvent(int orderId, int quantity) async {
+    final state = _printEventStates[orderId];
+    if (state == null) {
+      logger.w('Print-event 상태 없음: orderId=$orderId');
+      return;
+    }
+
+    // 각 API 호출마다 고유한 난수 eventKey 생성 (멱등성 보장)
+    final eventKey = _generateEventKey();
+
+    try {
+      final orderRepository = ref.read(orderRepositoryProvider);
+      final request = PrintEventRequest(
+        orderId: orderId,
+        quantity: quantity,
+        eventKey: eventKey,
+      );
+
+      logger.i('📤 Print-event API 호출: orderId=$orderId, quantity=$quantity, eventKey=$eventKey');
+
+      final response = await orderRepository.sendPrintEvent(request);
+
+      if (response.status == "success") {
+        // 성공 시 마지막 API 호출 시점 업데이트
+        final currentCount = _getTotalCompletedCountForOrder(orderId);
+        state.lastApiCount = currentCount;
+        state.lastApiTime = DateTime.now();
+
+        logger.i(
+            '✅ Print-event API 성공: orderId=$orderId, quantity=$quantity, lastApiCount=${state.lastApiCount}, totalPrintedQuantity=${response.data.totalPrintedQuantity}');
+      } else {
+        logger.w('⚠️ Print-event API 실패 (status=${response.status}): orderId=$orderId, message=${response.message}');
+      }
+    } catch (e, stackTrace) {
+      logger.e('❌ Print-event API 호출 실패: orderId=$orderId, error=$e\n$stackTrace');
+    }
+  }
+
+  @override
+  void dispose() {
+    // 모든 타이머 정리
+    for (final state in _printEventStates.values) {
+      state.dispose();
+    }
+    _printEventStates.clear();
+    super.dispose();
   }
 }
 

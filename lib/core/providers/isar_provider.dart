@@ -15,5 +15,6 @@ final isarProvider = FutureProvider<Isar>((ref) async {
     [OrderFieldValueStateSchema, OrderFieldValueMetadataSchema, OrderPrinterCountSchema, PrinterLastOrderSchema],
     directory: dir.path,
     name: 'print_manager',
+    inspector: true,
   );
 });

@@ -10,12 +10,12 @@ class ZipherCommand {
   /// Get State Request (GST)
   /// 상태 조회
   /// 응답: STS|상태코드|...|
-  /// 상태 코드: 0=Shutdown, 1=Ready, 2=Error, 3=Running, 4=Offline
+  /// overallState: 0=Shutdown, 1=Starting up, 2=Starting down, 3=Running, 4=Offline
   static String gst() => ZipherCommandEnum.gst.build();
 
   /// Set State Command (SST)
   /// 상태 설정
-  /// mode: 0=Pause, 1=Ready, 3=Running, 4=Offline
+  /// desiredState: 0=Shutdown, 1=Starting up, 2=Starting down, 3=Running, 4=Offline
   static String sst(String mode) => ZipherCommandEnum.sst.buildWithParam(mode);
 
   // ========== Job 관련 ==========

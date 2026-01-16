@@ -5,7 +5,10 @@ class OrderItem {
   final int itemId;
   final String itemName;
   final int quantity;
-  final int remainingQuantity;
+  final int baseQuantity;
+  final int printedQuantity;
+  final String? printStartedAt;
+  final String? printCompletedAt;
   final int stock;
   final String uniqueCode;
   final String startCode;
@@ -22,7 +25,10 @@ class OrderItem {
     required this.itemId,
     required this.itemName,
     required this.quantity,
-    required this.remainingQuantity,
+    required this.baseQuantity,
+    required this.printedQuantity,
+    required this.printStartedAt,
+    required this.printCompletedAt,
     required this.stock,
     required this.uniqueCode,
     required this.startCode,
@@ -40,7 +46,10 @@ class OrderItem {
     int? itemId,
     String? itemName,
     int? quantity,
-    int? remainingQuantity,
+    int? baseQuantity,
+    int? printedQuantity,
+    String? printStartedAt,
+    String? printCompletedAt,
     int? stock,
     String? uniqueCode,
     String? startCode,
@@ -57,7 +66,10 @@ class OrderItem {
       itemId: itemId ?? this.itemId,
       itemName: itemName ?? this.itemName,
       quantity: quantity ?? this.quantity,
-      remainingQuantity: remainingQuantity ?? this.remainingQuantity,
+      baseQuantity: baseQuantity ?? this.baseQuantity,
+      printedQuantity: printedQuantity ?? this.printedQuantity,
+      printStartedAt: printStartedAt ?? this.printStartedAt,
+      printCompletedAt: printCompletedAt ?? this.printCompletedAt,
       stock: stock ?? this.stock,
       uniqueCode: uniqueCode ?? this.uniqueCode,
       startCode: startCode ?? this.startCode,

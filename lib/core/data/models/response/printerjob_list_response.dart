@@ -12,8 +12,7 @@ abstract class PrinterjobListResponse with _$PrinterjobListResponse {
     required String timestamp,
   }) = _PrinterjobListResponse;
 
-  factory PrinterjobListResponse.fromJson(Map<String, dynamic> json) =>
-      _$PrinterjobListResponseFromJson(json);
+  factory PrinterjobListResponse.fromJson(Map<String, dynamic> json) => _$PrinterjobListResponseFromJson(json);
 }
 
 @freezed
@@ -22,8 +21,7 @@ abstract class PrinterjobListResponseData with _$PrinterjobListResponseData {
     required List<PrintJob> printJobList,
   }) = _PrinterjobListResponseData;
 
-  factory PrinterjobListResponseData.fromJson(Map<String, dynamic> json) =>
-      _$PrinterjobListResponseDataFromJson(json);
+  factory PrinterjobListResponseData.fromJson(Map<String, dynamic> json) => _$PrinterjobListResponseDataFromJson(json);
 }
 
 @freezed
@@ -40,6 +38,5 @@ abstract class PrintJob with _$PrintJob {
     required String regDate,
   }) = _PrintJob;
 
-  factory PrintJob.fromJson(Map<String, dynamic> json) =>
-      _$PrintJobFromJson(json);
+  factory PrintJob.fromJson(Map<String, dynamic> json) => _$PrintJobFromJson(json);
 }

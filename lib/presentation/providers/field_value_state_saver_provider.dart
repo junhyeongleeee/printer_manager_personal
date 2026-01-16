@@ -541,6 +541,16 @@ class FieldValueStateSaver {
     logger.i('프린터 마지막 발주 삭제 완료: userId=$_userId, printerId=$printerId');
   }
 
+  /// 모든 프린터 카운트 조회 (디버그용)
+  Future<List<OrderPrinterCount>> getAllPrinterCounts() async {
+    return await _isar.orderPrinterCounts.filter().userIdEqualTo(_userId).findAll();
+  }
+
+  /// 모든 마지막 발주 조회 (디버그용)
+  Future<List<PrinterLastOrder>> getAllLastOrders() async {
+    return await _isar.printerLastOrders.filter().userIdEqualTo(_userId).findAll();
+  }
+
   /// 모든 Isar 데이터 초기화 (모든 컬렉션 삭제)
   /// 주의: 이 메서드는 모든 데이터를 영구적으로 삭제합니다.
   Future<void> clearAllData() async {

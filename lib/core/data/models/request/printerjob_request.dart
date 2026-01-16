@@ -8,7 +8,6 @@ abstract class PrinterjobRequest with _$PrinterjobRequest {
   const factory PrinterjobRequest({
     required int orderId,
     required int processingCompanyPrinterId,
-    required int quantity,
   }) = _PrinterjobRequest;
 
   factory PrinterjobRequest.fromJson(Map<String, dynamic> json) => _$PrinterjobRequestFromJson(json);

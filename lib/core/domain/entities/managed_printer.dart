@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:print_manager/core/domain/printer_socket.dart';
 import 'package:print_manager/core/domain/printer_protocol.dart';
@@ -6,6 +7,8 @@ import 'package:print_manager/core/services/logger_service.dart';
 import 'package:print_manager/core/infra/zipher_socket.dart';
 import 'package:print_manager/core/domain/usecases/zipher_hybrid_counter.dart';
 import 'package:print_manager/core/domain/entities/order_item.dart';
+import 'package:print_manager/core/data/enums/printer_connection_status.dart';
+import 'package:print_manager/core/data/enums/printer_print_status.dart';
 
 class ManagedPrinter extends ChangeNotifier {
   final int index;
@@ -19,16 +22,17 @@ class ManagedPrinter extends ChangeNotifier {
   //final PrinterRepository repository;
 
   // 연결 상태 (네트워크 연결 상태)
-  String _connectionStatus = '미연결';
-  String get connectionStatus => _connectionStatus;
+  PrinterConnectionStatus _connectionStatus = PrinterConnectionStatus.disconnected;
+  PrinterConnectionStatus get connectionStatus => _connectionStatus;
+  String get connectionStatusText => _connectionStatus.displayText;
 
   // 프린터 작동 상태 (인쇄 상태)
-  String _printStatus = "인쇄 대기";
-  String get printStatus => _printStatus;
+  PrinterPrintStatus _printStatus = PrinterPrintStatus.shut_down;
+  PrinterPrintStatus get printStatus => _printStatus;
 
   // 하위 호환성을 위한 getter (기존 코드 호환)
-  @Deprecated('Use connectionStatus instead')
-  String get connectStatus => _connectionStatus;
+  @Deprecated('Use connectionStatusText instead')
+  String get connectStatus => _connectionStatus.displayText;
 
   String? _status;
   String? get status => _status;
@@ -105,17 +109,19 @@ class ManagedPrinter extends ChangeNotifier {
   })  : protocol = protocol ?? PrinterProtocol.zipher,
         socket = socket ?? PrinterSocketFactory.create(protocol ?? PrinterProtocol.zipher) {
     this.socket.setOnData(_handleData);
-    this.socket.setOnDone(() => _updateConnectionStatus('연결 종료'));
-    this.socket.setOnError((e) => _updateConnectionStatus('에러: $e'));
+    this.socket.setOnDone(() => _updateConnectionStatus(PrinterConnectionStatus.connectionClosed));
+    this.socket.setOnError((e) => _updateConnectionStatus(PrinterConnectionStatus.error));
   }
 
-  Future<bool> connect() async {
+  /// 프린터 연결
+  /// [onCompletedCountCheck] 콜백을 통해 발주 완료 여부를 체크할 수 있습니다.
+  Future<bool> connect({bool Function()? onCompletedCountCheck}) async {
     try {
       await socket.connect(ip, port);
-      _updateConnectionStatus('연결됨');
+      _updateConnectionStatus(PrinterConnectionStatus.connected);
 
       // 프린터 상태 읽기
-      await _readPrinterState();
+      await _readPrinterState(onCompletedCountCheck: onCompletedCountCheck);
 
       // Zipher 프로토콜일 때 프린터가 ON 상태일 때만 인쇄 감지 모니터링 시작
       if (protocol == PrinterProtocol.zipher && socket is ZipherSocket && _isPrinterOn == true) {
@@ -124,25 +130,52 @@ class ManagedPrinter extends ChangeNotifier {
 
       return true;
     } catch (_) {
-      _updateConnectionStatus('연결 실패');
+      _updateConnectionStatus(PrinterConnectionStatus.connectionFailed);
       return false;
     }
   }
 
+  /// 연결 상태 확인 (새로고침용)
+  /// 이미 연결된 경우 상태만 확인하고, 연결되지 않은 경우 연결 시도
+  /// [onCompletedCountCheck] 콜백을 통해 발주 완료 여부를 체크할 수 있습니다.
+  Future<void> checkConnectionStatus({bool Function()? onCompletedCountCheck}) async {
+    try {
+      // 이미 연결된 경우 상태만 확인
+      if (socket.isConnected) {
+        await _readPrinterState(onCompletedCountCheck: onCompletedCountCheck);
+        _updateConnectionStatus(PrinterConnectionStatus.connected);
+      } else {
+        // 연결되지 않은 경우 연결 시도
+        await connect(onCompletedCountCheck: onCompletedCountCheck);
+      }
+    } catch (e) {
+      logger.e('[$name] 연결 상태 확인 실패: $e');
+      _updateConnectionStatus(PrinterConnectionStatus.connectionFailed);
+      notifyListeners();
+    }
+  }
+
   /// 프린터 상태 읽기 (GST 명령)
-  Future<void> _readPrinterState() async {
+  /// [onCompletedCountCheck] 콜백을 통해 발주 완료 여부를 체크할 수 있습니다.
+  /// 콜백이 제공되고 true를 반환하면 Running 상태로 복원하지 않습니다.
+  Future<void> _readPrinterState({bool Function()? onCompletedCountCheck}) async {
     try {
       final statusResponse = await socket.getPrinterStatus();
       final stateCode = _parseStateFromResponse(statusResponse);
 
-      // 상태 코드: 3=Running (ON), 4=Offline (OFF), 1=Ready (OFF)
       bool? newIsPrinterOn;
-      if (stateCode == '3') {
+      if (stateCode == '4' || stateCode == '3') {
         newIsPrinterOn = true;
-      } else if (stateCode == '4' || stateCode == '1') {
+      } else if (stateCode == '1') {
         newIsPrinterOn = false;
       } else {
         newIsPrinterOn = null; // 알 수 없음
+      }
+
+      // Running 상태로 복원하려는 경우 발주 완료 여부 체크
+      if (newIsPrinterOn == true && onCompletedCountCheck != null && onCompletedCountCheck()) {
+        logger.w('[$name] 프린터 상태 읽기: 발주가 이미 완료되어 Running 상태로 복원하지 않습니다.');
+        newIsPrinterOn = false; // Offline 상태로 유지
       }
 
       if (_isPrinterOn != newIsPrinterOn) {
@@ -193,9 +226,19 @@ class ManagedPrinter extends ChangeNotifier {
   }
 
   /// 프린터 상태 변경 (ON/OFF)
-  Future<void> setPrinterState(bool on) async {
+  /// Socket 레벨에서 요청 큐를 처리하므로 순차적으로 실행됨
+  ///
+  /// [onCompletedCountCheck] 콜백을 통해 발주 완료 여부를 체크할 수 있습니다.
+  /// 콜백이 제공되고 true를 반환하면 Running 상태로 변경하지 않습니다.
+  Future<void> setPrinterState(bool on, {bool Function()? onCompletedCountCheck}) async {
     try {
       if (on) {
+        // 발주 완료 여부 체크 (콜백이 제공된 경우)
+        if (onCompletedCountCheck != null && onCompletedCountCheck()) {
+          logger.w('[$name] 프린터 상태 변경 실패: 발주가 이미 완료되었습니다.');
+          throw Exception('발주가 이미 완료되어 Running 상태로 변경할 수 없습니다.');
+        }
+
         await socket.setPrinterRunning();
         _isPrinterOn = true;
         logger.i('[$name] 프린터 상태 변경: ON (Running)');
@@ -212,6 +255,7 @@ class ManagedPrinter extends ChangeNotifier {
         // 프린터가 OFF일 때 카운트 모니터링 중지
         await stopPrintMonitoring();
       }
+
       notifyListeners();
       // 기존 콜백 방식도 유지 (하위 호환성)
       onCountUpdate?.call(this);
@@ -289,21 +333,17 @@ class ManagedPrinter extends ChangeNotifier {
             _currentPrintCount = count;
             logger.i('[$name] 인쇄 카운트 변경: $count장 (발주 미선택)');
           }
-
-          // 여기서 UI 업데이트나 상태 변경 로직 추가 가능
-          _updatePrinterStatus('인쇄 중 ($_currentPrintCount장)');
           // ChangeNotifier로 UI 자동 업데이트
           notifyListeners();
           // 기존 콜백 방식도 유지 (하위 호환성)
           onCountUpdate?.call(this);
         },
-        onPrintStarted: () {
-          logger.i('[$name] 인쇄 시작 감지');
-          _updatePrinterStatus('인쇄 시작');
-        },
-        onPrintCompleted: () {
-          logger.i('[$name] 인쇄 완료 감지 (총: $_currentPrintCount장)');
-          _updatePrinterStatus('인쇄 완료 ($_currentPrintCount장)');
+        onStatusChanged: (status) {
+          logger.i('[$name] 프린터 상태 변경: $status');
+          final newStatus = PrinterPrintStatus.fromCode(int.parse(status));
+          if (newStatus != null) {
+            _updatePrinterStatus(newStatus);
+          }
         },
         onRequestFieldValue: _fieldValueRequestCallback, // 중앙 관리자에게 필드 값 요청
       );
@@ -361,7 +401,7 @@ class ManagedPrinter extends ChangeNotifier {
     final field = 'Field00';
     final jobName = "0611textTest";
     await socket.setPrinterRunning();
-    _updatePrinterStatus("인쇄 중");
+    // _updatePrinterStatus(PrinterPrintStatus.printing);
 
     Future.delayed(Duration(milliseconds: 200)).then((_) async {
       for (int i = start; i <= end; i++) {
@@ -374,7 +414,7 @@ class ManagedPrinter extends ChangeNotifier {
       await socket.setPrinterOffline();
     });
 
-    _updatePrinterStatus("인쇄 완료");
+    // _updatePrinterStatus(PrinterPrintStatus.completed);
     //repository.updatePrinterJob(index);
   }
 
@@ -413,7 +453,7 @@ class ManagedPrinter extends ChangeNotifier {
 
       await Future.delayed(Duration(milliseconds: 200)); // 프린터 속도에 따라 조정
     }
-    _printStatus = "인쇄 완료";
+    // _printStatus = PrinterPrintStatus.completed;
     notifyListeners();
     // 프린터 Offline으로
     await socket.setPrinterOffline();
@@ -428,7 +468,7 @@ class ManagedPrinter extends ChangeNotifier {
   }
 
   /// 프린터 작동 상태 업데이트 (인쇄 상태)
-  void _updatePrinterStatus(String newStatus) {
+  void _updatePrinterStatus(PrinterPrintStatus newStatus) {
     if (_printStatus != newStatus) {
       _printStatus = newStatus;
       notifyListeners();
@@ -438,7 +478,7 @@ class ManagedPrinter extends ChangeNotifier {
   }
 
   /// 연결 상태 업데이트 (네트워크 연결 상태)
-  void _updateConnectionStatus(String newStatus) {
+  void _updateConnectionStatus(PrinterConnectionStatus newStatus) {
     if (_connectionStatus != newStatus) {
       _connectionStatus = newStatus;
       notifyListeners();
@@ -450,10 +490,11 @@ class ManagedPrinter extends ChangeNotifier {
   // 하위 호환성을 위한 메서드
   @Deprecated('Use _updateConnectionStatus instead')
   void _updateStatus(String newStatus) {
-    _updateConnectionStatus(newStatus);
+    final status = PrinterConnectionStatus.fromString(newStatus);
+    if (status != null) {
+      _updateConnectionStatus(status);
+    }
   }
-
-  @override
 
   /// 발주 선택
   void setSelectedOrder(OrderItem? order) {
@@ -527,18 +568,24 @@ class ManagedPrinter extends ChangeNotifier {
       hasChanged = true;
     }
     // connectionStatus 우선, 없으면 connectStatus (하위 호환성)
-    final newConnectionStatus = connectionStatus ?? connectStatus;
-    if (newConnectionStatus != null && _connectionStatus != newConnectionStatus) {
-      _connectionStatus = newConnectionStatus;
-      hasChanged = true;
+    final newConnectionStatusText = connectionStatus ?? connectStatus;
+    if (newConnectionStatusText != null) {
+      final newConnectionStatus = PrinterConnectionStatus.fromString(newConnectionStatusText);
+      if (newConnectionStatus != null && _connectionStatus != newConnectionStatus) {
+        _connectionStatus = newConnectionStatus;
+        hasChanged = true;
+      }
     }
     if (status != null && _status != status) {
       _status = status;
       hasChanged = true;
     }
-    if (printStatus != null && _printStatus != printStatus) {
-      _printStatus = printStatus;
-      hasChanged = true;
+    if (printStatus != null) {
+      final newPrintStatus = PrinterPrintStatus.fromCode(int.parse(printStatus));
+      if (newPrintStatus != null && _printStatus != newPrintStatus) {
+        _printStatus = newPrintStatus;
+        hasChanged = true;
+      }
     }
     if (startDate != null && _startDate != startDate) {
       _startDate = startDate;
